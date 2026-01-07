@@ -71,7 +71,7 @@ pub trait KGLikeDB: DatabaseLike {
             ));
 
             match column_types.as_slice() {
-                ["TEXT"] | ["VARCHAR"] => {
+                ["TEXT" | "VARCHAR"] => {
                     #[derive(QueryableByName)]
                     struct SingleTextPK {
                         #[diesel(sql_type = diesel::sql_types::Text)]
@@ -161,6 +161,7 @@ pub trait KGLikeDB: DatabaseLike {
     /// # Arguments
     ///
     /// * `conn` - A mutable reference to the database connection.
+    #[allow(clippy::too_many_lines)]
     fn edges<'a>(
         &'a self,
         conn: &'a mut PgConnection,
@@ -215,108 +216,98 @@ pub trait KGLikeDB: DatabaseLike {
 			));
 
 			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
-				(["TEXT"] | ["VARCHAR"], ["TEXT"] | ["VARCHAR"]) => {
+				(["TEXT" | "VARCHAR"], ["TEXT" | "VARCHAR"]) => {
 					#[derive(QueryableByName)]
 					struct TextToText {
-						#[diesel(sql_type = diesel::sql_types::Text)]
-						first: String,
-						#[diesel(sql_type = diesel::sql_types::Text)]
-						first_host: String,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+						first: Option<String>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+						first_host: Option<String>,
 					}
 					let results = query.load::<TextToText>(conn)?;
 					Ok(results
 						.into_iter()
-						.map(|row| {
-							let host_node = Node::new(host_table_name, row.first.into());
-							let referenced_node = Node::new(
-								referenced_table_name,
-								row.first_host.into(),
-							);
-							(host_node, referenced_node)
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
 						})
 						.collect())
 				}
 				(["INT"], ["INT"]) => {
 					#[derive(QueryableByName)]
 					struct IntToInt {
-						#[diesel(sql_type = diesel::sql_types::Integer)]
-						first: i32,
-						#[diesel(sql_type = diesel::sql_types::Integer)]
-						first_host: i32,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+						first: Option<i32>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+						first_host: Option<i32>,
 					}
 					let results = query.load::<IntToInt>(conn)?;
 					Ok(results
 						.into_iter()
-						.map(|row| {
-							let host_node = Node::new(host_table_name, row.first.into());
-							let referenced_node = Node::new(
-								referenced_table_name,
-								row.first_host.into(),
-							);
-							(host_node, referenced_node)
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
 						})
 						.collect())
 				}
 				(["UUID"], ["UUID"]) => {
 					#[derive(QueryableByName)]
 					struct UuidToUuid {
-						#[diesel(sql_type = diesel::sql_types::Uuid)]
-						first: uuid::Uuid,
-						#[diesel(sql_type = diesel::sql_types::Uuid)]
-						first_host: uuid::Uuid,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
+						first: Option<uuid::Uuid>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
+						first_host: Option<uuid::Uuid>,
 					}
 					let results = query.load::<UuidToUuid>(conn)?;
 					Ok(results
 						.into_iter()
-						.map(|row| {
-							let host_node = Node::new(host_table_name, row.first.into());
-							let referenced_node = Node::new(
-								referenced_table_name,
-								row.first_host.into(),
-							);
-							(host_node, referenced_node)
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
 						})
 						.collect())
 				}
 				(["INT"], ["UUID"]) => {
 					#[derive(QueryableByName)]
-					struct UuidToUuid {
-						#[diesel(sql_type = diesel::sql_types::Integer)]
-						first: i32,
-						#[diesel(sql_type = diesel::sql_types::Uuid)]
-						first_host: uuid::Uuid,
+					struct IntToUuid {
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+						first: Option<i32>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
+						first_host: Option<uuid::Uuid>,
 					}
-					let results = query.load::<UuidToUuid>(conn)?;
+					let results = query.load::<IntToUuid>(conn)?;
 					Ok(results
 						.into_iter()
-						.map(|row| {
-							let host_node = Node::new(host_table_name, row.first.into());
-							let referenced_node = Node::new(
-								referenced_table_name,
-								row.first_host.into(),
-							);
-							(host_node, referenced_node)
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
 						})
 						.collect())
 				}
 				(["UUID"], ["INT"]) => {
 					#[derive(QueryableByName)]
-					struct UuidToUuid {
-						#[diesel(sql_type = diesel::sql_types::Uuid)]
-						first: uuid::Uuid,
-						#[diesel(sql_type = diesel::sql_types::Integer)]
-						first_host: i32,
+					struct UuidToInt {
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
+						first: Option<uuid::Uuid>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+						first_host: Option<i32>,
 					}
-					let results = query.load::<UuidToUuid>(conn)?;
+					let results = query.load::<UuidToInt>(conn)?;
 					Ok(results
 						.into_iter()
-						.map(|row| {
-							let host_node = Node::new(host_table_name, row.first.into());
-							let referenced_node = Node::new(
-								referenced_table_name,
-								row.first_host.into(),
-							);
-							(host_node, referenced_node)
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
 						})
 						.collect())
 				}
