@@ -379,6 +379,14 @@ pub trait KGLikeDB: DatabaseLike {
             std::fs::create_dir_all(path)?;
         }
 
+        // Write node classes CSV
+        let node_classes_path = path.join("node_classes.csv");
+        let mut node_classes_writer = csv::Writer::from_path(node_classes_path)?;
+        for class_name in self.node_classes() {
+            node_classes_writer.write_record(&[class_name])?;
+        }
+        node_classes_writer.flush()?;
+
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
         let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
