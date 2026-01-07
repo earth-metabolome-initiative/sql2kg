@@ -267,32 +267,28 @@ pub trait KGLikeDB: DatabaseLike {
         &self,
         conn: &mut PgConnection,
         path: &std::path::Path,
-    ) -> Result<(), diesel::result::Error> {
+    ) -> Result<(), crate::errors::Error> {
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
-        let mut nodes_writer = csv::Writer::from_path(nodes_path).unwrap();
+        let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
         for nodes_result in self.nodes(conn) {
             let nodes = nodes_result?;
             for node in nodes {
-                nodes_writer
-                    .write_record(&[node.to_string(), node.class_name().to_owned()])
-                    .unwrap();
+                nodes_writer.write_record(&[node.to_string(), node.class_name().to_owned()])?;
             }
         }
-        nodes_writer.flush().unwrap();
+        nodes_writer.flush()?;
 
         // Write edges CSV
         let edges_path = path.join("edges.csv");
-        let mut edges_writer = csv::Writer::from_path(edges_path).unwrap();
+        let mut edges_writer = csv::Writer::from_path(edges_path)?;
         for edges_result in self.edges(conn) {
             let edges = edges_result?;
             for (host_node, referenced_node) in edges {
-                edges_writer
-                    .write_record(&[host_node.to_string(), referenced_node.to_string()])
-                    .unwrap();
+                edges_writer.write_record(&[host_node.to_string(), referenced_node.to_string()])?;
             }
         }
-        edges_writer.flush().unwrap();
+        edges_writer.flush()?;
 
         Ok(())
     }
