@@ -14,8 +14,14 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// In a database-based KG, node classes are typically represented as
     /// tables.
-    fn node_classes(&self) -> impl Iterator<Item = &str> {
-        self.tables().map(sql_traits::traits::TableLike::table_name)
+    fn node_classes(&self) -> impl Iterator<Item = String> {
+        self.tables().map(|table| {
+            if let Some(schema) = table.table_schema() {
+                format!("{}.{}", schema, table.table_name())
+            } else {
+                table.table_name().to_string()
+            }
+        })
     }
 
     /// Iterate over the nodes in the knowledge graph.
@@ -46,6 +52,7 @@ pub trait KGLikeDB: DatabaseLike {
             // For each table, we create a SQL diesel query to select the primary key
             // columns and convert them within the query into the standardized
             // node name format.
+            let table_schema = table.table_schema();
             let table_name = table.table_name();
             let primary_key_columns =
                 table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
@@ -80,7 +87,7 @@ pub trait KGLikeDB: DatabaseLike {
                     let results = query.load::<SingleTextPK>(conn)?;
                     Ok(results
                         .into_iter()
-                        .map(|row| Node::new(table_name, row.first.into()))
+                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
                         .collect())
                 }
                 ["INT"] => {
@@ -92,7 +99,7 @@ pub trait KGLikeDB: DatabaseLike {
                     let results = query.load::<SingleIntegerPK>(conn)?;
                     Ok(results
                         .into_iter()
-                        .map(|row| Node::new(table_name, row.first.into()))
+                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
                         .collect())
                 }
                 ["UUID"] => {
@@ -104,7 +111,7 @@ pub trait KGLikeDB: DatabaseLike {
                     let results = query.load::<SingleUuidPK>(conn)?;
                     Ok(results
                         .into_iter()
-                        .map(|row| Node::new(table_name, row.first.into()))
+                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
                         .collect())
                 }
                 _ => {
@@ -195,8 +202,10 @@ pub trait KGLikeDB: DatabaseLike {
 			// then we create the corresponding nodes for both the host and
 			// referenced tables.
 			let host_table = fk.host_table(self);
+			let host_table_schema = host_table.table_schema();
 			let host_table_name = host_table.table_name();
 			let referenced_table = fk.referenced_table(self);
+			let referenced_table_schema = referenced_table.table_schema();
 			let referenced_table_name = referenced_table.table_name();
 			let host_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
 			let host_column_types = host_columns
@@ -229,8 +238,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -248,8 +257,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -267,8 +276,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -286,8 +295,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -305,8 +314,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -324,8 +333,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -343,8 +352,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_name, row.first?.into()),
-								Node::new(referenced_table_name, row.first_host?.into()),
+								Node::new(host_table_schema, host_table_name, row.first?.into()),
+								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
 							))
 						})
 						.collect())
@@ -382,8 +391,8 @@ pub trait KGLikeDB: DatabaseLike {
         // Write node classes CSV
         let node_classes_path = path.join("node_classes.csv");
         let mut node_classes_writer = csv::Writer::from_path(node_classes_path)?;
-		// Write header
-		node_classes_writer.write_record(&["class_name"])?;
+        // Write header
+        node_classes_writer.write_record(&["class_name"])?;
 
         for class_name in self.node_classes() {
             node_classes_writer.write_record(&[class_name])?;
@@ -393,12 +402,27 @@ pub trait KGLikeDB: DatabaseLike {
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
         let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
-		// Write header
-		nodes_writer.write_record(&["node_id", "class_name"])?;
+        // Write header
+        nodes_writer.write_record(&["node_id", "class_names"])?;
         for nodes_result in self.nodes(conn) {
             let nodes = nodes_result?;
             for node in nodes {
-                nodes_writer.write_record(&[node.to_string(), node.class_name().to_owned()])?;
+                let node_id = node.to_string();
+                let node_table =
+                    self.table(node.schema_name(), node.table_name()).unwrap();
+				let ancestor_tables = node_table.ancestral_extended_tables(self);
+				let mut class_names = vec![node.class_name()];
+				for ancestor in ancestor_tables {
+					let ancestor_schema = ancestor.table_schema();
+					let ancestor_name = ancestor.table_name();
+					if let Some(schema) = ancestor_schema {
+						class_names.push(format!("{}.{}", schema, ancestor_name));
+					} else {
+						class_names.push(ancestor_name.to_string());
+					}
+				}
+				let class_names_str = class_names.join("|");
+                nodes_writer.write_record(&[node_id, class_names_str])?;
             }
         }
         nodes_writer.flush()?;
@@ -406,8 +430,8 @@ pub trait KGLikeDB: DatabaseLike {
         // Write edges CSV
         let edges_path = path.join("edges.csv");
         let mut edges_writer = csv::Writer::from_path(edges_path)?;
-		// Write header
-		edges_writer.write_record(&["source", "destination"])?;
+        // Write header
+        edges_writer.write_record(&["source", "destination"])?;
         for edges_result in self.edges(conn) {
             let edges = edges_result?;
             for (host_node, referenced_node) in edges {
