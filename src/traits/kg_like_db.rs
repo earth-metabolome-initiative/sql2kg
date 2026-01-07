@@ -71,7 +71,7 @@ pub trait KGLikeDB: DatabaseLike {
             ));
 
             match column_types.as_slice() {
-                ["TEXT"] => {
+                ["TEXT"] | ["VARCHAR"] => {
                     #[derive(QueryableByName)]
                     struct SingleTextPK {
                         #[diesel(sql_type = diesel::sql_types::Text)]
@@ -215,7 +215,7 @@ pub trait KGLikeDB: DatabaseLike {
 			));
 
 			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
-				(["TEXT"], ["TEXT"]) => {
+				(["TEXT"] | ["VARCHAR"], ["TEXT"] | ["VARCHAR"]) => {
 					#[derive(QueryableByName)]
 					struct TextToText {
 						#[diesel(sql_type = diesel::sql_types::Text)]
