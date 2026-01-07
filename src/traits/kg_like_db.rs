@@ -62,11 +62,11 @@ pub trait KGLikeDB: DatabaseLike {
             let primary_key_column_names = primary_key_columns
                 .iter()
                 .zip(["first", "second", "third"].iter())
-                .map(|(col, alias)| format!("{} as {alias}", col.column_name(),))
+                .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
             let query =
-                diesel::sql_query(format!("SELECT {primary_key_column_names} FROM {table_name}"));
+                diesel::sql_query(format!("SELECT {primary_key_column_names} FROM \"{table_name}\""));
 
             match column_types.as_slice() {
                 ["TEXT"] => {
@@ -162,7 +162,7 @@ pub trait KGLikeDB: DatabaseLike {
             let host_pk_column_names = host_primary_key_columns
                 .iter()
                 .zip(["first", "second", "third"].iter())
-                .map(|(col, alias)| format!("{} as {alias}", col.column_name(),))
+                .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
 
@@ -192,12 +192,12 @@ pub trait KGLikeDB: DatabaseLike {
 			let host_column_names = host_columns
 				.iter()
 				.zip(["first_host", "second_host", "third_host"].iter())
-				.map(|(col, alias)| format!("{} as {alias}", col.column_name(),))
+				.map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
 				.collect::<Vec<String>>()
 				.join(", ");
 
 			let query = diesel::sql_query(format!(
-				"SELECT {host_pk_column_names}, {host_column_names} FROM {host_table_name}"
+				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\""
 			));
 
 			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
