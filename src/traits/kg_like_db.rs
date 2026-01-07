@@ -278,6 +278,48 @@ pub trait KGLikeDB: DatabaseLike {
 						})
 						.collect())
 				}
+				(["INT"], ["UUID"]) => {
+					#[derive(QueryableByName)]
+					struct UuidToUuid {
+						#[diesel(sql_type = diesel::sql_types::Integer)]
+						first: i32,
+						#[diesel(sql_type = diesel::sql_types::Uuid)]
+						first_host: uuid::Uuid,
+					}
+					let results = query.load::<UuidToUuid>(conn)?;
+					Ok(results
+						.into_iter()
+						.map(|row| {
+							let host_node = Node::new(host_table_name, row.first.into());
+							let referenced_node = Node::new(
+								referenced_table_name,
+								row.first_host.into(),
+							);
+							(host_node, referenced_node)
+						})
+						.collect())
+				}
+				(["UUID"], ["INT"]) => {
+					#[derive(QueryableByName)]
+					struct UuidToUuid {
+						#[diesel(sql_type = diesel::sql_types::Uuid)]
+						first: uuid::Uuid,
+						#[diesel(sql_type = diesel::sql_types::Integer)]
+						first_host: i32,
+					}
+					let results = query.load::<UuidToUuid>(conn)?;
+					Ok(results
+						.into_iter()
+						.map(|row| {
+							let host_node = Node::new(host_table_name, row.first.into());
+							let referenced_node = Node::new(
+								referenced_table_name,
+								row.first_host.into(),
+							);
+							(host_node, referenced_node)
+						})
+						.collect())
+				}
 				_ => {
 					unimplemented!(
 						"Primary key column types of host {host_pk_column_types:?} and foreign key column types of host {host_column_types:?} are not yet supported"
