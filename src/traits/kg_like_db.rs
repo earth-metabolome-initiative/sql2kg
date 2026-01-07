@@ -268,6 +268,11 @@ pub trait KGLikeDB: DatabaseLike {
         conn: &mut PgConnection,
         path: &std::path::Path,
     ) -> Result<(), crate::errors::Error> {
+		// If the provided path does not exist, create it.
+		if !path.exists() {
+			std::fs::create_dir_all(path)?;
+		}
+
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
         let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
