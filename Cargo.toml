@@ -7,6 +7,7 @@ edition = "2024"
 sql-traits = { git = "https://github.com/earth-metabolome-initiative/sql-traits", branch = "main" }
 diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future3", features = [
 	"postgres",
+	"uuid"
 ] }
 uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"

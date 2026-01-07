@@ -2,6 +2,7 @@
 
 use diesel::{PgConnection, RunQueryDsl, prelude::QueryableByName};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
+use uuid;
 
 use crate::{edge_class::EdgeClass, node::Node};
 
@@ -65,8 +66,9 @@ pub trait KGLikeDB: DatabaseLike {
                 .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
-            let query =
-                diesel::sql_query(format!("SELECT {primary_key_column_names} FROM \"{table_name}\""));
+            let query = diesel::sql_query(format!(
+                "SELECT {primary_key_column_names} FROM \"{table_name}\""
+            ));
 
             match column_types.as_slice() {
                 ["TEXT"] => {
@@ -88,6 +90,18 @@ pub trait KGLikeDB: DatabaseLike {
                         first: i32,
                     }
                     let results = query.load::<SingleIntegerPK>(conn)?;
+                    Ok(results
+                        .into_iter()
+                        .map(|row| Node::new(table_name, row.first.into()))
+                        .collect())
+                }
+                ["UUID"] => {
+                    #[derive(QueryableByName)]
+                    struct SingleUuidPK {
+                        #[diesel(sql_type = diesel::sql_types::Uuid)]
+                        first: uuid::Uuid,
+                    }
+                    let results = query.load::<SingleUuidPK>(conn)?;
                     Ok(results
                         .into_iter()
                         .map(|row| Node::new(table_name, row.first.into()))
@@ -243,6 +257,27 @@ pub trait KGLikeDB: DatabaseLike {
 						})
 						.collect())
 				}
+				(["UUID"], ["UUID"]) => {
+					#[derive(QueryableByName)]
+					struct UuidToUuid {
+						#[diesel(sql_type = diesel::sql_types::Uuid)]
+						first: uuid::Uuid,
+						#[diesel(sql_type = diesel::sql_types::Uuid)]
+						first_host: uuid::Uuid,
+					}
+					let results = query.load::<UuidToUuid>(conn)?;
+					Ok(results
+						.into_iter()
+						.map(|row| {
+							let host_node = Node::new(host_table_name, row.first.into());
+							let referenced_node = Node::new(
+								referenced_table_name,
+								row.first_host.into(),
+							);
+							(host_node, referenced_node)
+						})
+						.collect())
+				}
 				_ => {
 					unimplemented!(
 						"Primary key column types of host {host_pk_column_types:?} and foreign key column types of host {host_column_types:?} are not yet supported"
@@ -268,10 +303,10 @@ pub trait KGLikeDB: DatabaseLike {
         conn: &mut PgConnection,
         path: &std::path::Path,
     ) -> Result<(), crate::errors::Error> {
-		// If the provided path does not exist, create it.
-		if !path.exists() {
-			std::fs::create_dir_all(path)?;
-		}
+        // If the provided path does not exist, create it.
+        if !path.exists() {
+            std::fs::create_dir_all(path)?;
+        }
 
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
