@@ -382,6 +382,9 @@ pub trait KGLikeDB: DatabaseLike {
         // Write node classes CSV
         let node_classes_path = path.join("node_classes.csv");
         let mut node_classes_writer = csv::Writer::from_path(node_classes_path)?;
+		// Write header
+		node_classes_writer.write_record(&["class_name"])?;
+
         for class_name in self.node_classes() {
             node_classes_writer.write_record(&[class_name])?;
         }
@@ -390,6 +393,8 @@ pub trait KGLikeDB: DatabaseLike {
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
         let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
+		// Write header
+		nodes_writer.write_record(&["node_id", "class_name"])?;
         for nodes_result in self.nodes(conn) {
             let nodes = nodes_result?;
             for node in nodes {
@@ -401,6 +406,8 @@ pub trait KGLikeDB: DatabaseLike {
         // Write edges CSV
         let edges_path = path.join("edges.csv");
         let mut edges_writer = csv::Writer::from_path(edges_path)?;
+		// Write header
+		edges_writer.write_record(&["source", "destination"])?;
         for edges_result in self.edges(conn) {
             let edges = edges_result?;
             for (host_node, referenced_node) in edges {
