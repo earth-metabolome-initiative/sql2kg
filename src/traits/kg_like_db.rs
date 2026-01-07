@@ -81,7 +81,7 @@ pub trait KGLikeDB: DatabaseLike {
                         .map(|row| Node::new(table_name, row.first.into()))
                         .collect())
                 }
-                ["INTEGER"] => {
+                ["INT"] => {
                     #[derive(QueryableByName)]
                     struct SingleIntegerPK {
                         #[diesel(sql_type = diesel::sql_types::Integer)]
@@ -222,7 +222,7 @@ pub trait KGLikeDB: DatabaseLike {
 						})
 						.collect())
 				}
-				(["INTEGER"], ["INTEGER"]) => {
+				(["INT"], ["INT"]) => {
 					#[derive(QueryableByName)]
 					struct IntToInt {
 						#[diesel(sql_type = diesel::sql_types::Integer)]
