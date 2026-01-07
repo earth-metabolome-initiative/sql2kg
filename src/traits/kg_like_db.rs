@@ -311,6 +311,25 @@ pub trait KGLikeDB: DatabaseLike {
 						})
 						.collect())
 				}
+				(["VARCHAR"], ["UUID"]) => {
+					#[derive(QueryableByName)]
+					struct VarcharToUuid {
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+						first: Option<String>,
+						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
+						first_host: Option<uuid::Uuid>,
+					}
+					let results = query.load::<VarcharToUuid>(conn)?;
+					Ok(results
+						.into_iter()
+						.filter_map(|row| {
+							Some((
+								Node::new(host_table_name, row.first?.into()),
+								Node::new(referenced_table_name, row.first_host?.into()),
+							))
+						})
+						.collect())
+				}
 				_ => {
 					unimplemented!(
 						"Primary key column types of host {host_pk_column_types:?} and foreign key column types of host {host_column_types:?} are not yet supported"
