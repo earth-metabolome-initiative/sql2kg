@@ -3,10 +3,9 @@
 use std::io::Write;
 
 use diesel::{PgConnection, RunQueryDsl, prelude::QueryableByName};
+use flate2::{Compression, write::GzEncoder};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 use uuid;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 
 use crate::{edge_class::EdgeClass, node::Node};
 
@@ -413,11 +412,8 @@ pub trait KGLikeDB: DatabaseLike {
         }
 
         // Write node classes CSV
-        let node_classes_path = if compress {
-            path.join("node_classes.csv.gz")
-        } else {
-            path.join("node_classes.csv")
-        };
+        let node_classes_path =
+            if compress { path.join("node_classes.csv.gz") } else { path.join("node_classes.csv") };
         let file = std::fs::File::create(node_classes_path)?;
         let writer: Box<dyn Write> = if compress {
             Box::new(GzEncoder::new(file, Compression::default()))
@@ -439,11 +435,7 @@ pub trait KGLikeDB: DatabaseLike {
         write_buffer.flush()?;
 
         // Write nodes CSV
-        let nodes_path = if compress {
-            path.join("nodes.csv.gz")
-        } else {
-            path.join("nodes.csv")
-        };
+        let nodes_path = if compress { path.join("nodes.csv.gz") } else { path.join("nodes.csv") };
         let file = std::fs::File::create(nodes_path)?;
         let writer: Box<dyn Write> = if compress {
             Box::new(GzEncoder::new(file, Compression::default()))
@@ -477,11 +469,8 @@ pub trait KGLikeDB: DatabaseLike {
         debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
 
         // Write edge classes CSV
-        let edge_classes_path = if compress {
-            path.join("edge_classes.csv.gz")
-        } else {
-            path.join("edge_classes.csv")
-        };
+        let edge_classes_path =
+            if compress { path.join("edge_classes.csv.gz") } else { path.join("edge_classes.csv") };
         let file = std::fs::File::create(edge_classes_path)?;
         let writer: Box<dyn Write> = if compress {
             Box::new(GzEncoder::new(file, Compression::default()))
@@ -502,11 +491,7 @@ pub trait KGLikeDB: DatabaseLike {
         debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]), "Edge classes are not sorted");
 
         // Write edges CSV
-        let edges_path = if compress {
-            path.join("edges.csv.gz")
-        } else {
-            path.join("edges.csv")
-        };
+        let edges_path = if compress { path.join("edges.csv.gz") } else { path.join("edges.csv") };
         let file = std::fs::File::create(edges_path)?;
         let writer: Box<dyn Write> = if compress {
             Box::new(GzEncoder::new(file, Compression::default()))
