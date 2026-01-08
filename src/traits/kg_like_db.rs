@@ -431,7 +431,7 @@ pub trait KGLikeDB: DatabaseLike {
         let mut nodes: Vec<Node<'_, Self>> = Vec::with_capacity(self.number_of_nodes(conn)?);
         let mut nodes_writer = std::io::BufWriter::new(file);
         // Write header
-        writeln!(nodes_writer, "node_id,node_class_names")?;
+        writeln!(nodes_writer, "node,node_class_ids")?;
         for (table_id, (nodes_result, table)) in self.nodes(conn).zip(self.tables()).enumerate() {
             let table_nodes = nodes_result?;
             let ancestor_table_ids = table
@@ -475,20 +475,20 @@ pub trait KGLikeDB: DatabaseLike {
         let file = std::fs::File::create(edges_path)?;
         let mut edges_writer = std::io::BufWriter::new(file);
         // Write header
-        writeln!(edges_writer, "host_node_id,referenced_node_id,edge_class_id")?;
+        writeln!(edges_writer, "src_id,dst_id,edge_class_id")?;
         for edges_result in self.edges(conn) {
             let edges = edges_result?;
             for (host_node, referenced_node, edge_class) in edges {
-                let host_node_id = nodes
+                let src_id = nodes
                     .binary_search(&host_node)
                     .map_err(|_| crate::errors::Error::NodeNotFound(host_node.to_string()))?;
-                let referenced_node_id = nodes
+                let dst_id = nodes
                     .binary_search(&referenced_node)
                     .map_err(|_| crate::errors::Error::NodeNotFound(referenced_node.to_string()))?;
                 let edge_class_id = edge_classes
                     .binary_search(&edge_class)
                     .map_err(|_| crate::errors::Error::EdgeClassNotFound(edge_class.to_string()))?;
-                writeln!(edges_writer, "{host_node_id},{referenced_node_id},{edge_class_id}")?;
+                writeln!(edges_writer, "{src_id},{dst_id},{edge_class_id}")?;
             }
         }
         edges_writer.flush()?;
