@@ -41,46 +41,46 @@ pub trait KGLikeDB: DatabaseLike {
     where
         'db: 'conn,
     {
-        self.tables().filter(|table| !table.is_extended(self) && table.has_primary_key(self)).map(
-            move |table| {
-                // For each table, we create a SQL diesel query to select the primary key
-                // columns and convert them within the query into the standardized
-                // node name format.
+        self.tables().filter(|table| table.has_primary_key(self)).map(move |table| {
+            // For each table, we create a SQL diesel query to select the primary key
+            // columns and convert them within the query into the standardized
+            // node name format.
 
-                let table_name = table.table_name();
-                let primary_key_columns =
-                    table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
+            let table_name = table.table_name();
+            let primary_key_columns =
+                table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
 
-                let dynamic_table = diesel_dynamic_schema::table(table_name);
-                let mut select = DynamicSelectClause::new();
+            let dynamic_table = diesel_dynamic_schema::table(table_name);
+            let mut select = DynamicSelectClause::new();
 
-                // Store columns and their names to reuse them for selection and ordering
-                let columns: Vec<_> = primary_key_columns
-                    .iter()
-                    .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
-                    .collect();
+            // Store columns and their names to reuse them for selection and ordering
+            let columns: Vec<_> = primary_key_columns
+                .iter()
+                .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                .collect();
 
-                for col in &columns {
-                    select.add_field(*col);
-                }
+            for col in &columns {
+                select.add_field(*col);
+            }
 
-                let mut query = dynamic_table.select(select).into_boxed();
+            let results: Vec<DynamicRow<NamedField<PrimaryKey>>> =
+                dynamic_table.select(select).load(conn)?;
+            let mut nodes: Vec<Node<'_, Self>> = results
+                .into_iter()
+                .map(|row| {
+                    let primary_keys: Vec<PrimaryKey> = row.into();
+                    Node::new(table, primary_keys.into())
+                })
+                .collect();
 
-                for col in &columns {
-                    query = query.then_order_by(col.asc());
-                }
+            // Ideally, the nodes should be queries with `ORDER BY` clause to
+            // ensure consistent ordering, but since we cannot guarantee that
+            // all primary key columns can be ordered using the expected collation,
+            // we sort them in Rust instead.
+            nodes.sort_unstable();
 
-                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
-
-                Ok(results
-                    .into_iter()
-                    .map(|row| {
-                        let primary_keys: Vec<PrimaryKey> = row.into();
-                        Node::new(table, primary_keys.into())
-                    })
-                    .collect())
-            },
-        )
+            Ok(nodes)
+        })
     }
 
     /// Returns the number of nodes in the knowledge graph.
