@@ -12,8 +12,6 @@ diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future
 diesel-dynamic-schema = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future3" }
 uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"
-csv = "1.1"
-flate2 = "1.0"
 time_requirements = "0.1.0"
 
 [lints.rust]
