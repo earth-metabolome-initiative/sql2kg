@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use diesel::{PgConnection, QueryDsl, RunQueryDsl, sql_types::Untyped};
+use diesel::{PgConnection, QueryDsl, RunQueryDsl, UntypedExpressionMethods, sql_types::Untyped};
 use diesel_dynamic_schema::{
     DynamicSelectClause,
     dynamic_value::{DynamicRow, NamedField},
@@ -10,11 +10,7 @@ use diesel_dynamic_schema::{
 use flate2::{Compression, write::GzEncoder};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 
-use crate::{
-    edge_class::EdgeClass,
-    node::Node,
-    primary_key::{NullablePrimaryKey, PrimaryKey},
-};
+use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
@@ -45,60 +41,46 @@ pub trait KGLikeDB: DatabaseLike {
     where
         'db: 'conn,
     {
-        self.tables().filter(|table| !table.is_extended(self)).map(move |table| {
-            // For each table, we create a SQL diesel query to select the primary key
-            // columns and convert them within the query into the standardized
-            // node name format.
+        self.tables().filter(|table| !table.is_extended(self) && table.has_primary_key(self)).map(
+            move |table| {
+                // For each table, we create a SQL diesel query to select the primary key
+                // columns and convert them within the query into the standardized
+                // node name format.
 
-            let table_name = table.table_name();
-            let primary_key_columns =
-                table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
+                let table_name = table.table_name();
+                let primary_key_columns =
+                    table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
 
-            // If the table has no primary key, we skip it for now.
-            if primary_key_columns.is_empty() {
-                return Ok(vec![]);
-            }
+                let dynamic_table = diesel_dynamic_schema::table(table_name);
+                let mut select = DynamicSelectClause::new();
 
-            let dynamic_table = diesel_dynamic_schema::table(table_name);
-            let mut select = DynamicSelectClause::new();
+                // Store columns and their names to reuse them for selection and ordering
+                let columns: Vec<_> = primary_key_columns
+                    .iter()
+                    .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                    .collect();
 
-            // Store columns and their names to reuse them for selection and ordering
-            let columns: Vec<_> = primary_key_columns
-                .iter()
-                .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
-                .collect();
+                for col in &columns {
+                    select.add_field(*col);
+                }
 
-            for col in &columns {
-                select.add_field(*col);
-            }
+                let mut query = dynamic_table.select(select).into_boxed();
 
-            let mut query = dynamic_table.select(select).into_boxed();
+                for col in &columns {
+                    query = query.then_order_by(col.asc());
+                }
 
-            for col in &columns {
-                query = query.then_order_by(*col);
-            }
+                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
 
-            let results: Vec<DynamicRow<NamedField<NullablePrimaryKey>>> = query.load(conn)?;
-
-            Ok(results
-                .into_iter()
-                .filter_map(|row| {
-                    let vals =
-                        row.into_iter().map(|f| f.value.0).collect::<Vec<Option<PrimaryKey>>>();
-
-                    if vals.iter().any(Option::is_none) {
-                        return None;
-                    }
-
-                    let pk_vals = vals
-                        .into_iter()
-                        .map(|v| v.expect("Safe due to previous check"))
-                        .collect::<Vec<PrimaryKey>>();
-
-                    Some(Node::new(table, pk_vals.into()))
-                })
-                .collect())
-        })
+                Ok(results
+                    .into_iter()
+                    .map(|row| {
+                        let primary_keys: Vec<PrimaryKey> = row.into();
+                        Node::new(table, primary_keys.into())
+                    })
+                    .collect())
+            },
+        )
     }
 
     /// Returns the number of nodes in the knowledge graph.
@@ -201,43 +183,37 @@ pub trait KGLikeDB: DatabaseLike {
                 let edge_class = EdgeClass::new(host_table, host_fk_columns.clone());
 
                 let dynamic_table = diesel_dynamic_schema::table(host_table.table_name());
-                let mut select = DynamicSelectClause::new();
+                let columns = host_pk_columns
+                    .iter()
+                    .chain(host_fk_columns.iter())
+                    .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                    .collect::<Vec<_>>();
+                let select = columns.iter().collect::<DynamicSelectClause<_, _>>();
 
-                for col in &host_pk_columns {
-                    select.add_field(dynamic_table.column::<Untyped, _>(col.column_name()));
-                }
-                for col in &host_fk_columns {
-                    select.add_field(dynamic_table.column::<Untyped, _>(col.column_name()));
+                // We make the query boxed to allow for dynamic construction.
+                let mut query = dynamic_table.select(select).into_boxed();
+
+                // We enforce that all of the involved columns are not null.
+                for col in &columns {
+                    query = query.filter(col.is_not_null());
                 }
 
-                let results: Vec<DynamicRow<NamedField<NullablePrimaryKey>>> =
-                    dynamic_table.select(select).load(conn)?;
+                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
 
                 let pk_len = host_pk_columns.len();
 
                 let edges = results
                     .into_iter()
-                    .filter_map(|row| {
-                        let vals =
-                            row.into_iter().map(|f| f.value.0).collect::<Vec<Option<PrimaryKey>>>();
-
-                        if vals.iter().any(Option::is_none) {
-                            return None;
-                        }
-
-                        let mut vals = vals
-                            .into_iter()
-                            .map(|v| v.expect("Safe due to previous check"))
-                            .collect::<Vec<PrimaryKey>>();
-
+                    .map(|row| {
+                        let mut vals: Vec<PrimaryKey> = row.into();
                         let fk_vals = vals.split_off(pk_len);
                         let pk_vals = vals;
 
-                        Some((
+                        (
                             Node::new(host_table, pk_vals.into()),
                             Node::new(referenced_table, fk_vals.into()),
                             edge_class.clone(),
-                        ))
+                        )
                     })
                     .collect::<Vec<_>>();
 

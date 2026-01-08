@@ -127,7 +127,7 @@ dependencies = [
 [[package]]
 name = "diesel"
 version = "2.3.5"
-source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#6243f4dc88b928bf1e19bdd752191b6475e777b1"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -141,7 +141,7 @@ dependencies = [
 [[package]]
 name = "diesel-dynamic-schema"
 version = "0.2.4"
-source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#6243f4dc88b928bf1e19bdd752191b6475e777b1"
 dependencies = [
  "diesel",
 ]
@@ -149,7 +149,7 @@ dependencies = [
 [[package]]
 name = "diesel_derives"
 version = "2.3.6"
-source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#6243f4dc88b928bf1e19bdd752191b6475e777b1"
 dependencies = [
  "diesel_table_macro_syntax",
  "dsl_auto_type",
@@ -161,7 +161,7 @@ dependencies = [
 [[package]]
 name = "diesel_table_macro_syntax"
 version = "0.3.0"
-source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#6243f4dc88b928bf1e19bdd752191b6475e777b1"
 dependencies = [
  "syn",
 ]
@@ -186,7 +186,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 [[package]]
 name = "dsl_auto_type"
 version = "0.2.0"
-source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#6243f4dc88b928bf1e19bdd752191b6475e777b1"
 dependencies = [
  "darling",
  "either",
@@ -457,9 +457,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.179"
+version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5a2d376baa530d1238d133232d15e239abad80d05838b4b59354e5268af431f"
+checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
 name = "libgit2-sys"
