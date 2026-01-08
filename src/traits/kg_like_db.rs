@@ -9,6 +9,7 @@ use diesel_dynamic_schema::{
 };
 use flate2::{Compression, write::GzEncoder};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
+use time_requirements::{prelude::TimeTracker, task::Task};
 
 use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
 
@@ -238,12 +239,14 @@ pub trait KGLikeDB: DatabaseLike {
         conn: &mut PgConnection,
         path: &std::path::Path,
         compress: bool,
-    ) -> Result<(), crate::errors::Error> {
+    ) -> Result<TimeTracker, crate::errors::Error> {
         // If the provided path does not exist, create it.
         if !path.exists() {
             std::fs::create_dir_all(path)?;
         }
 
+        let mut tracker = TimeTracker::new("Write KG CSVs");
+        let task = Task::new("Writing node class CSV");
         // Write node classes CSV
         let node_classes_path =
             if compress { path.join("node_classes.csv.gz") } else { path.join("node_classes.csv") };
@@ -266,7 +269,9 @@ pub trait KGLikeDB: DatabaseLike {
             }
         }
         write_buffer.flush()?;
+        tracker.add_completed_task(task);
 
+        let task = Task::new("Writing node CSV");
         // Write nodes CSV
         let nodes_path = if compress { path.join("nodes.csv.gz") } else { path.join("nodes.csv") };
         let file = std::fs::File::create(nodes_path)?;
@@ -296,11 +301,13 @@ pub trait KGLikeDB: DatabaseLike {
             nodes.extend(table_nodes);
         }
         nodes_writer.flush()?;
+        tracker.add_completed_task(task);
 
         // Since the tables are sorted and the nodes themselves are sorted within
         // each table, the nodes are globally sorted.
         debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
 
+        let task = Task::new("Writing edge classes CSV");
         // Write edge classes CSV
         let edge_classes_path =
             if compress { path.join("edge_classes.csv.gz") } else { path.join("edge_classes.csv") };
@@ -319,10 +326,12 @@ pub trait KGLikeDB: DatabaseLike {
             edge_classes.push(edge_class);
         }
         edge_classes_writer.flush()?;
+        tracker.add_completed_task(task);
 
         // Since the edge classes are sorted, we can assert that here.
         debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]), "Edge classes are not sorted");
 
+        let task = Task::new("Writing edges CSV");
         // Write edges CSV
         let edges_path = if compress { path.join("edges.csv.gz") } else { path.join("edges.csv") };
         let file = std::fs::File::create(edges_path)?;
@@ -350,8 +359,9 @@ pub trait KGLikeDB: DatabaseLike {
             }
         }
         edges_writer.flush()?;
+        tracker.add_completed_task(task);
 
-        Ok(())
+        Ok(tracker)
     }
 }
 
