@@ -63,7 +63,7 @@ pub trait KGLikeDB: DatabaseLike {
                 .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
-            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).map(|alias| format!("{alias} COLLATE \"C\"")).collect::<Vec<String>>().join(", ");
+            let primary_key_aliases = primary_key_columns.iter().map(|col| format!("\"{}\" COLLATE \"C\"", col.column_name())).collect::<Vec<String>>().join(", ");
 
             let query = diesel::sql_query(format!(
                 "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases}"
