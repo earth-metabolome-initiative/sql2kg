@@ -5,6 +5,8 @@ use std::io::Write;
 use diesel::{PgConnection, RunQueryDsl, prelude::QueryableByName};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 use uuid;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 use crate::{edge_class::EdgeClass, node::Node};
 
@@ -393,6 +395,7 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// * `conn` - A mutable reference to the database connection.
     /// * `path` - The path where to write the CSV files.
+    /// * `compress` - Whether to compress the output files using gzip.
     ///
     /// # Errors
     ///
@@ -402,6 +405,7 @@ pub trait KGLikeDB: DatabaseLike {
         &self,
         conn: &mut PgConnection,
         path: &std::path::Path,
+        compress: bool,
     ) -> Result<(), crate::errors::Error> {
         // If the provided path does not exist, create it.
         if !path.exists() {
@@ -409,9 +413,18 @@ pub trait KGLikeDB: DatabaseLike {
         }
 
         // Write node classes CSV
-        let node_classes_path = path.join("node_classes.csv");
+        let node_classes_path = if compress {
+            path.join("node_classes.csv.gz")
+        } else {
+            path.join("node_classes.csv")
+        };
         let file = std::fs::File::create(node_classes_path)?;
-        let mut write_buffer = std::io::BufWriter::new(file);
+        let writer: Box<dyn Write> = if compress {
+            Box::new(GzEncoder::new(file, Compression::default()))
+        } else {
+            Box::new(file)
+        };
+        let mut write_buffer = std::io::BufWriter::new(writer);
         // Write header
         writeln!(write_buffer, "node_class")?;
         for table in self.tables() {
@@ -426,10 +439,19 @@ pub trait KGLikeDB: DatabaseLike {
         write_buffer.flush()?;
 
         // Write nodes CSV
-        let nodes_path = path.join("nodes.csv");
+        let nodes_path = if compress {
+            path.join("nodes.csv.gz")
+        } else {
+            path.join("nodes.csv")
+        };
         let file = std::fs::File::create(nodes_path)?;
+        let writer: Box<dyn Write> = if compress {
+            Box::new(GzEncoder::new(file, Compression::default()))
+        } else {
+            Box::new(file)
+        };
         let mut nodes: Vec<Node<'_, Self>> = Vec::with_capacity(self.number_of_nodes(conn)?);
-        let mut nodes_writer = std::io::BufWriter::new(file);
+        let mut nodes_writer = std::io::BufWriter::new(writer);
         // Write header
         writeln!(nodes_writer, "node,node_class_ids")?;
         for (table_id, (nodes_result, table)) in self.nodes(conn).zip(self.tables()).enumerate() {
@@ -455,9 +477,18 @@ pub trait KGLikeDB: DatabaseLike {
         debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
 
         // Write edge classes CSV
-        let edge_classes_path = path.join("edge_classes.csv");
+        let edge_classes_path = if compress {
+            path.join("edge_classes.csv.gz")
+        } else {
+            path.join("edge_classes.csv")
+        };
         let file = std::fs::File::create(edge_classes_path)?;
-        let mut edge_classes_writer = std::io::BufWriter::new(file);
+        let writer: Box<dyn Write> = if compress {
+            Box::new(GzEncoder::new(file, Compression::default()))
+        } else {
+            Box::new(file)
+        };
+        let mut edge_classes_writer = std::io::BufWriter::new(writer);
         let mut edge_classes: Vec<EdgeClass<'_, Self>> = Vec::new();
         // Write header
         writeln!(edge_classes_writer, "edge_class")?;
@@ -471,9 +502,18 @@ pub trait KGLikeDB: DatabaseLike {
         debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]), "Edge classes are not sorted");
 
         // Write edges CSV
-        let edges_path = path.join("edges.csv");
+        let edges_path = if compress {
+            path.join("edges.csv.gz")
+        } else {
+            path.join("edges.csv")
+        };
         let file = std::fs::File::create(edges_path)?;
-        let mut edges_writer = std::io::BufWriter::new(file);
+        let writer: Box<dyn Write> = if compress {
+            Box::new(GzEncoder::new(file, Compression::default()))
+        } else {
+            Box::new(file)
+        };
+        let mut edges_writer = std::io::BufWriter::new(writer);
         // Write header
         writeln!(edges_writer, "src_id,dst_id,edge_class_id")?;
         for edges_result in self.edges(conn) {

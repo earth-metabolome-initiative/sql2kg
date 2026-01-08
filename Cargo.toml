@@ -11,6 +11,8 @@ diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future
 ] }
 uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"
+csv = "1.1"
+flate2 = "1.0"
 
 [lints.rust]
 missing_docs = "forbid"
