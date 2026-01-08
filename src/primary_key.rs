@@ -3,7 +3,7 @@
 
 use std::fmt::Display;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// An enum representing valid primary key-like constructs in a knowledge
 /// graph-like database.
 pub enum PrimaryKey {

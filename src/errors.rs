@@ -10,7 +10,11 @@ pub enum Error {
     /// An IO error occurred.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    /// A CSV error occurred.
-    #[error("CSV error: {0}")]
-    Csv(#[from] csv::Error),
+    /// A node from the edge list could not be found in the node list.
+    #[error("Node not found: {0}")]
+    NodeNotFound(String),
+    /// An edge class from the edge list could not be found in the edge class
+    /// list.
+    #[error("Edge class not found: {0}")]
+    EdgeClassNotFound(String),
 }

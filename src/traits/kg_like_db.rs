@@ -1,5 +1,7 @@
 //! Submodule defining the `KGLikeDB` trait for knowledge graph-like databases.
 
+use std::io::Write;
+
 use diesel::{PgConnection, RunQueryDsl, prelude::QueryableByName};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 use uuid;
@@ -8,22 +10,6 @@ use crate::{edge_class::EdgeClass, node::Node};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
-    /// Iterate over the node classes in the knowledge graph.
-    ///
-    /// # Implementative details
-    ///
-    /// In a database-based KG, node classes are typically represented as
-    /// tables.
-    fn node_classes(&self) -> impl Iterator<Item = String> {
-        self.tables().map(|table| {
-            if let Some(schema) = table.table_schema() {
-                format!("{}.{}", schema, table.table_name())
-            } else {
-                table.table_name().to_string()
-            }
-        })
-    }
-
     /// Iterate over the nodes in the knowledge graph.
     ///
     /// # Arguments
@@ -44,15 +30,18 @@ pub trait KGLikeDB: DatabaseLike {
     /// another table in an inheritance hierarchy, only the rows of the most
     /// derived tables are returned, i.e. only the nodes of a leaf table are
     /// returned.
-    fn nodes<'a>(
-        &'a self,
-        conn: &'a mut PgConnection,
-    ) -> impl Iterator<Item = Result<Vec<Node<'a>>, diesel::result::Error>> + 'a {
+    fn nodes<'conn, 'db>(
+        &'db self,
+        conn: &'conn mut PgConnection,
+    ) -> impl Iterator<Item = Result<Vec<Node<'db, Self>>, diesel::result::Error>> + 'conn
+    where
+        'db: 'conn,
+    {
         self.tables().filter(|table| !table.is_extended(self)).map(move |table| {
             // For each table, we create a SQL diesel query to select the primary key
             // columns and convert them within the query into the standardized
             // node name format.
-            let table_schema = table.table_schema();
+
             let table_name = table.table_name();
             let primary_key_columns =
                 table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
@@ -85,10 +74,7 @@ pub trait KGLikeDB: DatabaseLike {
                         first: String,
                     }
                     let results = query.load::<SingleTextPK>(conn)?;
-                    Ok(results
-                        .into_iter()
-                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
-                        .collect())
+                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
                 }
                 ["INT"] => {
                     #[derive(QueryableByName)]
@@ -97,10 +83,7 @@ pub trait KGLikeDB: DatabaseLike {
                         first: i32,
                     }
                     let results = query.load::<SingleIntegerPK>(conn)?;
-                    Ok(results
-                        .into_iter()
-                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
-                        .collect())
+                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
                 }
                 ["UUID"] => {
                     #[derive(QueryableByName)]
@@ -109,10 +92,7 @@ pub trait KGLikeDB: DatabaseLike {
                         first: uuid::Uuid,
                     }
                     let results = query.load::<SingleUuidPK>(conn)?;
-                    Ok(results
-                        .into_iter()
-                        .map(|row| Node::new(table_schema, table_name, row.first.into()))
-                        .collect())
+                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
                 }
                 _ => {
                     unimplemented!(
@@ -121,6 +101,31 @@ pub trait KGLikeDB: DatabaseLike {
                 }
             }
         })
+    }
+
+    /// Returns the number of nodes in the knowledge graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `conn` - A mutable reference to the database connection.
+    fn number_of_nodes(&self, conn: &mut PgConnection) -> Result<usize, diesel::result::Error> {
+        let mut total = 0;
+
+        #[derive(QueryableByName)]
+        struct Count {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            count: i64,
+        }
+
+        for table in self.tables() {
+            total += diesel::sql_query(format!(
+                "SELECT COUNT(*) as count FROM \"{}\"",
+                table.table_name()
+            ))
+            .get_result::<Count>(conn)?
+            .count as usize;
+        }
+        Ok(total)
     }
 
     /// Iterate over the edges classes in the knowledge graph.
@@ -132,24 +137,23 @@ pub trait KGLikeDB: DatabaseLike {
     /// referenced table's primary key columns. Each edge class is represented
     /// as a tuple of the host table name, the referenced table name, and
     /// the foreign key column names.
-    fn edge_classes(&self) -> impl Iterator<Item = EdgeClass<'_>> {
+    fn edge_classes(&self) -> impl Iterator<Item = EdgeClass<'_, Self>> {
         self.tables().flat_map(move |t| {
-            t.foreign_keys(self).filter_map(move |fk| {
-                // We disregard foreign keys that do not point to primary key columns
-                // in the referenced table.
-                if !fk.is_referenced_primary_key(self) {
-                    return None;
-                }
+            let mut edge_classes = t
+                .foreign_keys(self)
+                .filter_map(move |fk| {
+                    // We disregard foreign keys that do not point to primary key columns
+                    // in the referenced table.
+                    if !fk.is_referenced_primary_key(self) {
+                        return None;
+                    }
 
-                let table_schema = t.table_schema();
-                let table_name = t.table_name();
-
-                let host_column_names = fk
-                    .host_columns(self)
-                    .map(sql_traits::traits::ColumnLike::column_name)
-                    .collect::<Vec<&str>>();
-                Some(EdgeClass::new(table_schema, table_name, host_column_names))
-            })
+                    let host_columns = fk.host_columns(self).collect::<Vec<_>>();
+                    Some(EdgeClass::new(t, host_columns))
+                })
+                .collect::<Vec<EdgeClass<'_, Self>>>();
+            edge_classes.sort_unstable();
+            edge_classes
         })
     }
 
@@ -159,10 +163,18 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// * `conn` - A mutable reference to the database connection.
     #[allow(clippy::too_many_lines)]
-    fn edges<'a>(
-        &'a self,
-        conn: &'a mut PgConnection,
-    ) -> impl Iterator<Item = Result<Vec<(Node<'a>, Node<'a>, EdgeClass<'a>)>, diesel::result::Error>> + 'a {
+    fn edges<'conn, 'db>(
+        &'db self,
+        conn: &'conn mut PgConnection,
+    ) -> impl Iterator<
+        Item = Result<
+            Vec<(Node<'db, Self>, Node<'db, Self>, EdgeClass<'db, Self>)>,
+            diesel::result::Error,
+        >,
+    > + 'conn
+    where
+        'db: 'conn,
+    {
         self.tables().flat_map(move |t| {
             let host_primary_key_columns =
                 t.primary_key_columns(self).collect::<Vec<&Self::Column>>();
@@ -192,23 +204,19 @@ pub trait KGLikeDB: DatabaseLike {
 			// then we create the corresponding nodes for both the host and
 			// referenced tables.
 			let host_table = fk.host_table(self);
-			let host_table_schema = host_table.table_schema();
+			let _host_table_schema = host_table.table_schema();
 			let host_table_name = host_table.table_name();
 			let referenced_table = fk.referenced_table(self);
-			let referenced_table_schema = referenced_table.table_schema();
-			let referenced_table_name = referenced_table.table_name();
+			let _referenced_table_schema = referenced_table.table_schema();
+			let _referenced_table_name = referenced_table.table_name();
 			let host_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
 			let host_column_types = host_columns
 				.iter()
 				.map(|col| col.normalized_data_type(self))
 				.collect::<Vec<&str>>();
 			let edge_class = EdgeClass::new(
-				host_table_schema,
-				host_table_name,
-				host_columns
-					.iter()
-					.map(|col| col.column_name())
-					.collect(),
+				host_table,
+				host_columns.clone(),
 			);
 
 			let host_column_names = host_columns
@@ -219,7 +227,7 @@ pub trait KGLikeDB: DatabaseLike {
 				.join(", ");
 
 			let query = diesel::sql_query(format!(
-				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\""
+				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\" ORDER BY {host_pk_column_names}"
 			));
 
 			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
@@ -236,8 +244,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -256,8 +264,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -276,8 +284,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -296,8 +304,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -316,8 +324,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -336,8 +344,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -356,8 +364,8 @@ pub trait KGLikeDB: DatabaseLike {
 						.into_iter()
 						.filter_map(|row| {
 							Some((
-								Node::new(host_table_schema, host_table_name, row.first?.into()),
-								Node::new(referenced_table_schema, referenced_table_name, row.first_host?.into()),
+								Node::new(host_table, row.first?.into()),
+								Node::new(referenced_table, row.first_host?.into()),
 								edge_class.clone()
 							))
 						})
@@ -395,61 +403,85 @@ pub trait KGLikeDB: DatabaseLike {
 
         // Write node classes CSV
         let node_classes_path = path.join("node_classes.csv");
-        let mut node_classes_writer = csv::Writer::from_path(node_classes_path)?;
+        let file = std::fs::File::create(node_classes_path)?;
+        let mut write_buffer = std::io::BufWriter::new(file);
         // Write header
-        node_classes_writer.write_record(&["class_name"])?;
-
-        for class_name in self.node_classes() {
-            node_classes_writer.write_record(&[class_name])?;
+        writeln!(write_buffer, "node_class")?;
+        for table in self.tables() {
+            let table_schema = table.table_schema();
+            let table_name = table.table_name();
+            if let Some(schema) = table_schema {
+                writeln!(write_buffer, "\"{schema}.{table_name}\"")?;
+            } else {
+                writeln!(write_buffer, "\"{table_name}\"")?;
+            }
         }
-        node_classes_writer.flush()?;
+        write_buffer.flush()?;
 
         // Write nodes CSV
         let nodes_path = path.join("nodes.csv");
-        let mut nodes_writer = csv::Writer::from_path(nodes_path)?;
+        let file = std::fs::File::create(nodes_path)?;
+        let mut nodes: Vec<Node<'_, Self>> = Vec::with_capacity(self.number_of_nodes(conn)?);
+        let mut nodes_writer = std::io::BufWriter::new(file);
         // Write header
-        nodes_writer.write_record(&["node_id", "class_names"])?;
-        for nodes_result in self.nodes(conn) {
-            let nodes = nodes_result?;
-            for node in nodes {
-                let node_id = node.to_string();
-                let node_table = self.table(node.schema_name(), node.table_name()).unwrap();
-                let ancestor_tables = node_table.ancestral_extended_tables(self);
-                let mut class_names = vec![node.class_name()];
-                for ancestor in ancestor_tables {
-                    let ancestor_schema = ancestor.table_schema();
-                    let ancestor_name = ancestor.table_name();
-                    if let Some(schema) = ancestor_schema {
-                        class_names.push(format!("{}.{}", schema, ancestor_name));
-                    } else {
-                        class_names.push(ancestor_name.to_string());
-                    }
+        writeln!(nodes_writer, "node_id,node_class_names")?;
+        for (table_id, (nodes_result, table)) in self.nodes(conn).zip(self.tables()).enumerate() {
+            let table_nodes = nodes_result?;
+            let ancestor_table_ids = table
+                .ancestral_extended_tables(self)
+                .into_iter()
+                .map(|t| self.table_id(t).expect("Failed to find tables loaded from the database"))
+                .collect::<Vec<usize>>();
+            for node in table_nodes.iter() {
+                write!(nodes_writer, "\"{node}\",{table_id}")?;
+                for ancestor_table_id in ancestor_table_ids.iter() {
+                    write!(nodes_writer, "|{ancestor_table_id}")?;
                 }
-                let class_names_str = class_names.join("|");
-                nodes_writer.write_record(&[node_id, class_names_str])?;
+                writeln!(nodes_writer)?;
             }
+            nodes.extend(table_nodes);
         }
         nodes_writer.flush()?;
 
-		// Write edge classes CSV
-		let edge_classes_path = path.join("edge_classes.csv");
-		let mut edge_classes_writer = csv::Writer::from_path(edge_classes_path)?;
-		// Write header
-		edge_classes_writer.write_record(&["edge_class"])?;
-		for edge_class in self.edge_classes() {
-			edge_classes_writer.write_record(&[edge_class.to_string()])?;
-		}
-		edge_classes_writer.flush()?;
+        // Since the tables are sorted and the nodes themselves are sorted within
+        // each table, the nodes are globally sorted.
+        debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]));
+
+        // Write edge classes CSV
+        let edge_classes_path = path.join("edge_classes.csv");
+        let file = std::fs::File::create(edge_classes_path)?;
+        let mut edge_classes_writer = std::io::BufWriter::new(file);
+        let mut edge_classes: Vec<EdgeClass<'_, Self>> = Vec::new();
+        // Write header
+        writeln!(edge_classes_writer, "edge_class")?;
+        for edge_class in self.edge_classes() {
+            writeln!(edge_classes_writer, "\"{edge_class}\"")?;
+            edge_classes.push(edge_class);
+        }
+        edge_classes_writer.flush()?;
+
+        // Since the edge classes are sorted, we can assert that here.
+        debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]));
 
         // Write edges CSV
         let edges_path = path.join("edges.csv");
-        let mut edges_writer = csv::Writer::from_path(edges_path)?;
+        let file = std::fs::File::create(edges_path)?;
+        let mut edges_writer = std::io::BufWriter::new(file);
         // Write header
-        edges_writer.write_record(&["source", "destination", "edge_class"])?;
+        writeln!(edges_writer, "host_node_id,referenced_node_id,edge_class_id")?;
         for edges_result in self.edges(conn) {
             let edges = edges_result?;
             for (host_node, referenced_node, edge_class) in edges {
-                edges_writer.write_record(&[host_node.to_string(), referenced_node.to_string(), edge_class.to_string()])?;
+                let host_node_id = nodes
+                    .binary_search(&host_node)
+                    .map_err(|_| crate::errors::Error::NodeNotFound(host_node.to_string()))?;
+                let referenced_node_id = nodes
+                    .binary_search(&referenced_node)
+                    .map_err(|_| crate::errors::Error::NodeNotFound(referenced_node.to_string()))?;
+                let edge_class_id = edge_classes
+                    .binary_search(&edge_class)
+                    .map_err(|_| crate::errors::Error::EdgeClassNotFound(edge_class.to_string()))?;
+                writeln!(edges_writer, "{host_node_id},{referenced_node_id},{edge_class_id}")?;
             }
         }
         edges_writer.flush()?;
