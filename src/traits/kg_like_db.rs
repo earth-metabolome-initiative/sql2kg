@@ -10,7 +10,11 @@ use diesel_dynamic_schema::{
 use flate2::{Compression, write::GzEncoder};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 
-use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
+use crate::{
+    edge_class::EdgeClass,
+    node::Node,
+    primary_key::{NullablePrimaryKey, PrimaryKey},
+};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
@@ -191,25 +195,34 @@ pub trait KGLikeDB: DatabaseLike {
                     select.add_field(dynamic_table.column::<Untyped, _>(col.column_name()));
                 }
 
-                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> =
+                let results: Vec<DynamicRow<NamedField<NullablePrimaryKey>>> =
                     dynamic_table.select(select).load(conn)?;
 
                 let pk_len = host_pk_columns.len();
 
                 let edges = results
                     .into_iter()
-                    .map(|row| {
-                        let mut vals =
-                            row.into_iter().map(|f| f.value).collect::<Vec<PrimaryKey>>();
+                    .filter_map(|row| {
+                        let vals =
+                            row.into_iter().map(|f| f.value.0).collect::<Vec<Option<PrimaryKey>>>();
+
+                        if vals.iter().any(Option::is_none) {
+                            return None;
+                        }
+
+                        let mut vals = vals
+                            .into_iter()
+                            .map(|v| v.expect("Safe due to previous check"))
+                            .collect::<Vec<PrimaryKey>>();
 
                         let fk_vals = vals.split_off(pk_len);
                         let pk_vals = vals;
 
-                        (
+                        Some((
                             Node::new(host_table, pk_vals.into()),
                             Node::new(referenced_table, fk_vals.into()),
                             edge_class.clone(),
-                        )
+                        ))
                     })
                     .collect::<Vec<_>>();
 

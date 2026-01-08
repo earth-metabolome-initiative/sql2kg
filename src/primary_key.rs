@@ -55,6 +55,20 @@ impl FromSql<Any, Pg> for PrimaryKey {
     }
 }
 
+/// A wrapper around `Option<PrimaryKey>` to handle nullable values from
+/// diesel-dynamic-schema.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NullablePrimaryKey(pub Option<PrimaryKey>);
+
+impl FromSql<Any, Pg> for NullablePrimaryKey {
+    fn from_sql(value: PgValue) -> deserialize::Result<Self> {
+        // This is called only for non-null values by Diesel's FromSqlRow logic
+        // (usually).
+        let pk = PrimaryKey::from_sql(value)?;
+        Ok(NullablePrimaryKey(Some(pk)))
+    }
+}
+
 impl From<String> for PrimaryKey {
     fn from(s: String) -> Self {
         PrimaryKey::String(s)
