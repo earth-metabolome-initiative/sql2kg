@@ -445,7 +445,7 @@ pub trait KGLikeDB: DatabaseLike {
 
         // Since the tables are sorted and the nodes themselves are sorted within
         // each table, the nodes are globally sorted.
-        debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]));
+        debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
 
         // Write edge classes CSV
         let edge_classes_path = path.join("edge_classes.csv");
@@ -461,7 +461,7 @@ pub trait KGLikeDB: DatabaseLike {
         edge_classes_writer.flush()?;
 
         // Since the edge classes are sorted, we can assert that here.
-        debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]));
+        debug_assert!(edge_classes.windows(2).all(|w| w[0] <= w[1]), "Edge classes are not sorted");
 
         // Write edges CSV
         let edges_path = path.join("edges.csv");
