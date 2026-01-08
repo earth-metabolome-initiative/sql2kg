@@ -63,10 +63,10 @@ pub trait KGLikeDB: DatabaseLike {
                 .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
-            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).copied().collect::<Vec<&str>>().join(", ");
+            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).map(|alias| format!("{alias} ASC COLLATE \"C\"")).collect::<Vec<String>>().join(", ");
 
             let query = diesel::sql_query(format!(
-                "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases} ASC"
+                "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases}"
             ));
 
             match column_types.as_slice() {
@@ -450,7 +450,7 @@ pub trait KGLikeDB: DatabaseLike {
         // each table, the nodes are globally sorted.
         for (node_a, node_b) in nodes.windows(2).map(|w| (&w[0], &w[1])) {
             if node_a > node_b {
-                panic!("Nodes are not sorted: {node_a} > {node_b}");
+                panic!("Nodes are not sorted: \"{node_a}\" > \"{node_b}\"");
             }
         }
 
