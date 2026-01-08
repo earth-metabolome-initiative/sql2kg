@@ -56,14 +56,17 @@ pub trait KGLikeDB: DatabaseLike {
                 .iter()
                 .map(|col| col.normalized_data_type(self))
                 .collect::<Vec<&str>>();
+            let aliases = ["first", "second", "third"];
             let primary_key_column_names = primary_key_columns
                 .iter()
-                .zip(["first", "second", "third"].iter())
+                .zip(aliases.iter())
                 .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
+            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).cloned().collect::<Vec<&str>>().join(", ");
+
             let query = diesel::sql_query(format!(
-                "SELECT {primary_key_column_names} FROM \"{table_name}\""
+                "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases} ASC"
             ));
 
             match column_types.as_slice() {
@@ -227,7 +230,7 @@ pub trait KGLikeDB: DatabaseLike {
 				.join(", ");
 
 			let query = diesel::sql_query(format!(
-				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\" ORDER BY {host_pk_column_names}"
+				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\""
 			));
 
 			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
