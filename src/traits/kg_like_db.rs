@@ -78,13 +78,24 @@ pub trait KGLikeDB: DatabaseLike {
                 query = query.then_order_by(*col);
             }
 
-            let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
+            let results: Vec<DynamicRow<NamedField<NullablePrimaryKey>>> = query.load(conn)?;
 
             Ok(results
                 .into_iter()
-                .map(|row| {
-                    let pk_vals = row.into_iter().map(|f| f.value).collect::<Vec<PrimaryKey>>();
-                    Node::new(table, pk_vals.into())
+                .filter_map(|row| {
+                    let vals =
+                        row.into_iter().map(|f| f.value.0).collect::<Vec<Option<PrimaryKey>>>();
+
+                    if vals.iter().any(Option::is_none) {
+                        return None;
+                    }
+
+                    let pk_vals = vals
+                        .into_iter()
+                        .map(|v| v.expect("Safe due to previous check"))
+                        .collect::<Vec<PrimaryKey>>();
+
+                    Some(Node::new(table, pk_vals.into()))
                 })
                 .collect())
         })
@@ -103,6 +114,10 @@ pub trait KGLikeDB: DatabaseLike {
         let mut total = 0;
 
         for table in self.tables() {
+            if !table.has_primary_key(self) {
+                continue;
+            }
+
             let count: i64 =
                 diesel_dynamic_schema::table(table.table_name()).count().get_result(conn)?;
 
