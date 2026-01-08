@@ -63,7 +63,7 @@ pub trait KGLikeDB: DatabaseLike {
                 .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
                 .collect::<Vec<String>>()
                 .join(", ");
-            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).cloned().collect::<Vec<&str>>().join(", ");
+            let primary_key_aliases = aliases.iter().take(primary_key_columns.len()).copied().collect::<Vec<&str>>().join(", ");
 
             let query = diesel::sql_query(format!(
                 "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases} ASC"
@@ -448,7 +448,11 @@ pub trait KGLikeDB: DatabaseLike {
 
         // Since the tables are sorted and the nodes themselves are sorted within
         // each table, the nodes are globally sorted.
-        debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
+        for (node_a, node_b) in nodes.windows(2).map(|w| (&w[0], &w[1])) {
+            if node_a > node_b {
+                panic!("Nodes are not sorted: {node_a} > {node_b}");
+            }
+        }
 
         // Write edge classes CSV
         let edge_classes_path = path.join("edge_classes.csv");
