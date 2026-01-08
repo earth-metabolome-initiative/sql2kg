@@ -15,28 +15,28 @@ pub struct Node<'db, DB: DatabaseLike> {
     primary_key: PrimaryKey,
 }
 
-impl<'db, DB: DatabaseLike> PartialEq for Node<'db, DB> {
+impl<DB: DatabaseLike> PartialEq for Node<'_, DB> {
     fn eq(&self, other: &Self) -> bool {
         self.table == other.table && self.primary_key == other.primary_key
     }
 }
 
-impl<'db, DB: DatabaseLike> Eq for Node<'db, DB> {}
+impl<DB: DatabaseLike> Eq for Node<'_, DB> {}
 
-impl<'db, DB: DatabaseLike> std::hash::Hash for Node<'db, DB> {
+impl<DB: DatabaseLike> std::hash::Hash for Node<'_, DB> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.table.hash(state);
         self.primary_key.hash(state);
     }
 }
 
-impl<'db, DB: DatabaseLike> PartialOrd for Node<'db, DB> {
+impl<DB: DatabaseLike> PartialOrd for Node<'_, DB> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'db, DB: DatabaseLike> Ord for Node<'db, DB> {
+impl<DB: DatabaseLike> Ord for Node<'_, DB> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.table.cmp(other.table) {
             std::cmp::Ordering::Equal => self.primary_key.cmp(&other.primary_key),

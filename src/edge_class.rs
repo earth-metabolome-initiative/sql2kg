@@ -13,21 +13,21 @@ pub struct EdgeClass<'db, DB: DatabaseLike> {
     columns: Vec<&'db DB::Column>,
 }
 
-impl<'db, DB: DatabaseLike> PartialEq for EdgeClass<'db, DB> {
+impl<DB: DatabaseLike> PartialEq for EdgeClass<'_, DB> {
     fn eq(&self, other: &Self) -> bool {
         self.host_table == other.host_table && self.columns == other.columns
     }
 }
 
-impl<'db, DB: DatabaseLike> Eq for EdgeClass<'db, DB> {}
+impl<DB: DatabaseLike> Eq for EdgeClass<'_, DB> {}
 
-impl<'db, DB: DatabaseLike> PartialOrd for EdgeClass<'db, DB> {
+impl<DB: DatabaseLike> PartialOrd for EdgeClass<'_, DB> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'db, DB: DatabaseLike> Ord for EdgeClass<'db, DB> {
+impl<DB: DatabaseLike> Ord for EdgeClass<'_, DB> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.host_table.cmp(other.host_table) {
             std::cmp::Ordering::Equal => self.columns.cmp(&other.columns),
@@ -36,7 +36,7 @@ impl<'db, DB: DatabaseLike> Ord for EdgeClass<'db, DB> {
     }
 }
 
-impl<'db, DB: DatabaseLike> std::hash::Hash for EdgeClass<'db, DB> {
+impl<DB: DatabaseLike> std::hash::Hash for EdgeClass<'_, DB> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.host_table.hash(state);
         for column in &self.columns {

@@ -116,22 +116,34 @@ pub trait KGLikeDB: DatabaseLike {
     /// # Arguments
     ///
     /// * `conn` - A mutable reference to the database connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `diesel::result::Error` if the database query fails.
     fn number_of_nodes(&self, conn: &mut PgConnection) -> Result<usize, diesel::result::Error> {
-        let mut total = 0;
-
         #[derive(QueryableByName)]
         struct Count {
             #[diesel(sql_type = diesel::sql_types::BigInt)]
             count: i64,
         }
 
+        let mut total = 0;
+
         for table in self.tables() {
-            total += diesel::sql_query(format!(
-                "SELECT COUNT(*) as count FROM \"{}\"",
-                table.table_name()
-            ))
-            .get_result::<Count>(conn)?
-            .count as usize;
+            total += usize::try_from(
+                diesel::sql_query(format!(
+                    "SELECT COUNT(*) as count FROM \"{}\"",
+                    table.table_name()
+                ))
+                .get_result::<Count>(conn)?
+                .count,
+            )
+            .map_err(|_| {
+                diesel::result::Error::DeserializationError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Count value too large for usize",
+                )))
+            })?;
         }
         Ok(total)
     }
@@ -170,7 +182,7 @@ pub trait KGLikeDB: DatabaseLike {
     /// # Arguments
     ///
     /// * `conn` - A mutable reference to the database connection.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::type_complexity)]
     fn edges<'conn, 'db>(
         &'db self,
         conn: &'conn mut PgConnection,
@@ -453,9 +465,9 @@ pub trait KGLikeDB: DatabaseLike {
                 .into_iter()
                 .map(|t| self.table_id(t).expect("Failed to find tables loaded from the database"))
                 .collect::<Vec<usize>>();
-            for node in table_nodes.iter() {
+            for node in &table_nodes {
                 write!(nodes_writer, "\"{node}\",{table_id}")?;
-                for ancestor_table_id in ancestor_table_ids.iter() {
+                for ancestor_table_id in &ancestor_table_ids {
                     write!(nodes_writer, "|{ancestor_table_id}")?;
                 }
                 writeln!(nodes_writer)?;
