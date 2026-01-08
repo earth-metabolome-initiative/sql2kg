@@ -2,12 +2,15 @@
 
 use std::io::Write;
 
-use diesel::{PgConnection, RunQueryDsl, prelude::QueryableByName};
+use diesel::{PgConnection, QueryDsl, RunQueryDsl, sql_types::Untyped};
+use diesel_dynamic_schema::{
+    DynamicSelectClause,
+    dynamic_value::{DynamicRow, NamedField},
+};
 use flate2::{Compression, write::GzEncoder};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
-use uuid;
 
-use crate::{edge_class::EdgeClass, node::Node};
+use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
@@ -47,67 +50,39 @@ pub trait KGLikeDB: DatabaseLike {
             let primary_key_columns =
                 table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
 
-            // If the table has no primary key or has more than 3 primary key columns, we
-            // skip it for now.
-            if primary_key_columns.is_empty() || primary_key_columns.len() > 3 {
+            // If the table has no primary key, we skip it for now.
+            if primary_key_columns.is_empty() {
                 return Ok(vec![]);
             }
 
-            let column_types = primary_key_columns
-                .iter()
-                .map(|col| col.normalized_data_type(self))
-                .collect::<Vec<&str>>();
-            let aliases = ["first", "second", "third"];
-            let primary_key_column_names = primary_key_columns
-                .iter()
-                .zip(aliases.iter())
-                .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
-                .collect::<Vec<String>>()
-                .join(", ");
-            let primary_key_aliases = primary_key_columns.iter().map(|col| if col.is_textual(self) {
-                  format!("\"{}\" COLLATE \"C\"", col.column_name())
-                } else {
-                  format!("\"{}\"", col.column_name())
-                }).collect::<Vec<String>>().join(", ");
+            let dynamic_table = diesel_dynamic_schema::table(table_name);
+            let mut select = DynamicSelectClause::new();
 
-            let query = diesel::sql_query(format!(
-                "SELECT {primary_key_column_names} FROM \"{table_name}\" ORDER BY {primary_key_aliases}"
-            ));
+            // Store columns and their names to reuse them for selection and ordering
+            let columns: Vec<_> = primary_key_columns
+                .iter()
+                .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                .collect();
 
-            match column_types.as_slice() {
-                ["TEXT" | "VARCHAR"] => {
-                    #[derive(QueryableByName)]
-                    struct SingleTextPK {
-                        #[diesel(sql_type = diesel::sql_types::Text)]
-                        first: String,
-                    }
-                    let results = query.load::<SingleTextPK>(conn)?;
-                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
-                }
-                ["INT"] => {
-                    #[derive(QueryableByName)]
-                    struct SingleIntegerPK {
-                        #[diesel(sql_type = diesel::sql_types::Integer)]
-                        first: i32,
-                    }
-                    let results = query.load::<SingleIntegerPK>(conn)?;
-                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
-                }
-                ["UUID"] => {
-                    #[derive(QueryableByName)]
-                    struct SingleUuidPK {
-                        #[diesel(sql_type = diesel::sql_types::Uuid)]
-                        first: uuid::Uuid,
-                    }
-                    let results = query.load::<SingleUuidPK>(conn)?;
-                    Ok(results.into_iter().map(|row| Node::new(table, row.first.into())).collect())
-                }
-                _ => {
-                    unimplemented!(
-                        "Primary key column types of {column_types:?} are not yet supported"
-                    );
-                }
+            for col in &columns {
+                select.add_field(*col);
             }
+
+            let mut query = dynamic_table.select(select).into_boxed();
+
+            for col in &columns {
+                query = query.then_order_by(*col);
+            }
+
+            let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
+
+            Ok(results
+                .into_iter()
+                .map(|row| {
+                    let pk_vals = row.into_iter().map(|f| f.value).collect::<Vec<PrimaryKey>>();
+                    Node::new(table, pk_vals.into())
+                })
+                .collect())
         })
     }
 
@@ -121,24 +96,13 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// Returns a `diesel::result::Error` if the database query fails.
     fn number_of_nodes(&self, conn: &mut PgConnection) -> Result<usize, diesel::result::Error> {
-        #[derive(QueryableByName)]
-        struct Count {
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
-            count: i64,
-        }
-
         let mut total = 0;
 
         for table in self.tables() {
-            total += usize::try_from(
-                diesel::sql_query(format!(
-                    "SELECT COUNT(*) as count FROM \"{}\"",
-                    table.table_name()
-                ))
-                .get_result::<Count>(conn)?
-                .count,
-            )
-            .map_err(|_| {
+            let count: i64 =
+                diesel_dynamic_schema::table(table.table_name()).count().get_result(conn)?;
+
+            total += usize::try_from(count).map_err(|_| {
                 diesel::result::Error::DeserializationError(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Count value too large for usize",
@@ -195,209 +159,62 @@ pub trait KGLikeDB: DatabaseLike {
     where
         'db: 'conn,
     {
-        self.tables().flat_map(move |t| {
-            let host_primary_key_columns =
-                t.primary_key_columns(self).collect::<Vec<&Self::Column>>();
+        self.tables()
+            .flat_map(move |t| {
+                let host_primary_key_columns =
+                    t.primary_key_columns(self).collect::<Vec<&Self::Column>>();
 
-            let host_pk_column_types = host_primary_key_columns
-                .iter()
-                .map(|col| col.normalized_data_type(self))
-                .collect::<Vec<&str>>();
-            let host_pk_column_names = host_primary_key_columns
-                .iter()
-                .zip(["first", "second", "third"].iter())
-                .map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
-                .collect::<Vec<String>>()
-                .join(", ");
+                t.foreign_keys(self).filter_map(move |fk| {
+                    if !fk.is_referenced_primary_key(self) || host_primary_key_columns.is_empty() {
+                        return None;
+                    }
+                    Some((fk, host_primary_key_columns.clone()))
+                })
+            })
+            .map(move |(fk, host_pk_columns)| {
+                // We query the host table to get all rows and their foreign key values,
+                // then we create the corresponding nodes for both the host and
+                // referenced tables.
+                let host_table = fk.host_table(self);
+                let referenced_table = fk.referenced_table(self);
 
-			t.foreign_keys(self).filter_map(move |fk| {
-				if !fk.is_referenced_primary_key(self)
-                    || host_primary_key_columns.is_empty()
-                    || host_primary_key_columns.len() > 3
-                {
-                    return None;
+                let host_fk_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
+                let edge_class = EdgeClass::new(host_table, host_fk_columns.clone());
+
+                let dynamic_table = diesel_dynamic_schema::table(host_table.table_name());
+                let mut select = DynamicSelectClause::new();
+
+                for col in &host_pk_columns {
+                    select.add_field(dynamic_table.column::<Untyped, _>(col.column_name()));
                 }
-					Some((fk, host_pk_column_types.clone(), host_pk_column_names.clone()))
-			})
-        }).map(move |(fk, host_pk_column_types, host_pk_column_names)| {
-			// We query the host table to get all rows and their foreign key values,
-			// then we create the corresponding nodes for both the host and
-			// referenced tables.
-			let host_table = fk.host_table(self);
-			let _host_table_schema = host_table.table_schema();
-			let host_table_name = host_table.table_name();
-			let referenced_table = fk.referenced_table(self);
-			let _referenced_table_schema = referenced_table.table_schema();
-			let _referenced_table_name = referenced_table.table_name();
-			let host_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
-			let host_column_types = host_columns
-				.iter()
-				.map(|col| col.normalized_data_type(self))
-				.collect::<Vec<&str>>();
-			let edge_class = EdgeClass::new(
-				host_table,
-				host_columns.clone(),
-			);
+                for col in &host_fk_columns {
+                    select.add_field(dynamic_table.column::<Untyped, _>(col.column_name()));
+                }
 
-			let host_column_names = host_columns
-				.iter()
-				.zip(["first_host", "second_host", "third_host"].iter())
-				.map(|(col, alias)| format!("\"{}\" as {alias}", col.column_name(),))
-				.collect::<Vec<String>>()
-				.join(", ");
+                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> =
+                    dynamic_table.select(select).load(conn)?;
 
-			let query = diesel::sql_query(format!(
-				"SELECT {host_pk_column_names}, {host_column_names} FROM \"{host_table_name}\""
-			));
+                let pk_len = host_pk_columns.len();
 
-			match (host_pk_column_types.as_slice(), host_column_types.as_slice()) {
-				(["TEXT" | "VARCHAR"], ["TEXT" | "VARCHAR"]) => {
-					#[derive(QueryableByName)]
-					struct TextToText {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-						first: Option<String>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-						first_host: Option<String>,
-					}
-					let results = query.load::<TextToText>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["INT"], ["INT"]) => {
-					#[derive(QueryableByName)]
-					struct IntToInt {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
-						first: Option<i32>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
-						first_host: Option<i32>,
-					}
-					let results = query.load::<IntToInt>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["UUID"], ["UUID"]) => {
-					#[derive(QueryableByName)]
-					struct UuidToUuid {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first: Option<uuid::Uuid>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first_host: Option<uuid::Uuid>,
-					}
-					let results = query.load::<UuidToUuid>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["INT"], ["UUID"]) => {
-					#[derive(QueryableByName)]
-					struct IntToUuid {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
-						first: Option<i32>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first_host: Option<uuid::Uuid>,
-					}
-					let results = query.load::<IntToUuid>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["UUID"], ["INT"]) => {
-					#[derive(QueryableByName)]
-					struct UuidToInt {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first: Option<uuid::Uuid>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
-						first_host: Option<i32>,
-					}
-					let results = query.load::<UuidToInt>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["VARCHAR"], ["UUID"]) => {
-					#[derive(QueryableByName)]
-					struct VarcharToUuid {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-						first: Option<String>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first_host: Option<uuid::Uuid>,
-					}
-					let results = query.load::<VarcharToUuid>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				(["UUID"], ["VARCHAR"]) => {
-					#[derive(QueryableByName)]
-					struct UuidToVarchar {
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
-						first: Option<uuid::Uuid>,
-						#[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-						first_host: Option<String>,
-					}
-					let results = query.load::<UuidToVarchar>(conn)?;
-					Ok(results
-						.into_iter()
-						.filter_map(|row| {
-							Some((
-								Node::new(host_table, row.first?.into()),
-								Node::new(referenced_table, row.first_host?.into()),
-								edge_class.clone()
-							))
-						})
-						.collect())
-				}
-				_ => {
-					unimplemented!(
-						"Primary key column types of host {host_pk_column_types:?} and foreign key column types of host {host_column_types:?} are not yet supported"
-					);
-				}
-			}
-		})
+                let edges = results
+                    .into_iter()
+                    .map(|row| {
+                        let mut vals =
+                            row.into_iter().map(|f| f.value).collect::<Vec<PrimaryKey>>();
+
+                        let fk_vals = vals.split_off(pk_len);
+                        let pk_vals = vals;
+
+                        (
+                            Node::new(host_table, pk_vals.into()),
+                            Node::new(referenced_table, fk_vals.into()),
+                            edge_class.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(edges)
+            })
     }
 
     /// Writes out the CSVs representing the knowledge graph at the given path.

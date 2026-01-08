@@ -139,6 +139,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "diesel-dynamic-schema"
+version = "0.2.4"
+source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
+dependencies = [
+ "diesel",
+]
+
+[[package]]
 name = "diesel_derives"
 version = "2.3.6"
 source = "git+https://github.com/LucaCappelletti94/diesel?branch=future3#34d53799d0bd747a87061701a03cd6ac5eb51332"
@@ -757,6 +765,7 @@ version = "0.1.0"
 dependencies = [
  "csv",
  "diesel",
+ "diesel-dynamic-schema",
  "flate2",
  "sql-traits",
  "thiserror",
