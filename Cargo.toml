@@ -5,11 +5,11 @@ edition = "2024"
 
 [dependencies]
 sql-traits = { git = "https://github.com/earth-metabolome-initiative/sql-traits", branch = "main" }
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future3", features = [
+diesel = { git = "https://github.com/diesel-rs/diesel", branch = "main", features = [
 	"postgres",
 	"uuid",
 ] }
-diesel-dynamic-schema = { git = "https://github.com/LucaCappelletti94/diesel", branch = "future3" }
+diesel-dynamic-schema = { git = "https://github.com/diesel-rs/diesel", branch = "main" }
 uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"
 time_requirements = "0.1.0"
