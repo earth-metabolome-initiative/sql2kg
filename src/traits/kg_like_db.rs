@@ -42,9 +42,9 @@ pub trait KGLikeDB: DatabaseLike {
         'db: 'conn,
     {
         self.tables().filter(|table| table.has_primary_key(self)).map(move |table| {
-            // For each table, we create a SQL diesel query to select the primary key
-            // columns and convert them within the query into the standardized
-            // node name format.
+            // For each table, we create a SQL diesel query to select the
+            // primary key columns and convert them within the query
+            // into the standardized node name format.
 
             let table_name = table.table_name();
             let primary_key_columns =
@@ -53,7 +53,8 @@ pub trait KGLikeDB: DatabaseLike {
             let dynamic_table = diesel_dynamic_schema::table(table_name);
             let mut select = DynamicSelectClause::new();
 
-            // Store columns and their names to reuse them for selection and ordering
+            // Store columns and their names to reuse them for selection and
+            // ordering
             let columns: Vec<_> = primary_key_columns
                 .iter()
                 .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
@@ -75,8 +76,8 @@ pub trait KGLikeDB: DatabaseLike {
 
             // Ideally, the nodes should be queries with `ORDER BY` clause to
             // ensure consistent ordering, but since we cannot guarantee that
-            // all primary key columns can be ordered using the expected collation,
-            // we sort them in Rust instead.
+            // all primary key columns can be ordered using the expected
+            // collation, we sort them in Rust instead.
             nodes.sort_unstable();
 
             Ok(nodes)
@@ -127,8 +128,8 @@ pub trait KGLikeDB: DatabaseLike {
             let mut edge_classes = t
                 .foreign_keys(self)
                 .filter_map(move |fk| {
-                    // We disregard foreign keys that do not point to primary key columns
-                    // in the referenced table.
+                    // We disregard foreign keys that do not point to primary
+                    // key columns in the referenced table.
                     if !fk.is_referenced_primary_key(self) {
                         return None;
                     }
@@ -173,9 +174,10 @@ pub trait KGLikeDB: DatabaseLike {
                 })
             })
             .map(move |(fk, host_pk_columns)| {
-                // We query the host table to get all rows and their foreign key values,
-                // then we create the corresponding nodes for both the host and
-                // referenced tables.
+                // We query the host table to get all rows and their foreign key
+                // values, then we create the corresponding
+                // nodes for both the host and referenced
+                // tables.
                 let host_table = fk.host_table(self);
                 let referenced_table = fk.referenced_table(self);
 
@@ -289,8 +291,8 @@ pub trait KGLikeDB: DatabaseLike {
         nodes_writer.flush()?;
         tracker.add_completed_task(task);
 
-        // Since the tables are sorted and the nodes themselves are sorted within
-        // each table, the nodes are globally sorted.
+        // Since the tables are sorted and the nodes themselves are sorted
+        // within each table, the nodes are globally sorted.
         debug_assert!(nodes.windows(2).all(|w| w[0] <= w[1]), "Nodes are not sorted");
 
         let task = Task::new("Writing edge classes CSV");
