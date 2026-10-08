@@ -2,15 +2,10 @@
 
 use std::io::Write;
 
-use diesel::{PgConnection, QueryDsl, RunQueryDsl, UntypedExpressionMethods, sql_types::Untyped};
-use diesel_dynamic_schema::{
-    DynamicSelectClause,
-    dynamic_value::{DynamicRow, NamedField},
-};
 use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 use time_requirements::{prelude::TimeTracker, task::Task};
 
-use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
+use crate::{edge_class::EdgeClass, node::Node, traits::KgConnection};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
@@ -34,44 +29,21 @@ pub trait KGLikeDB: DatabaseLike {
     /// another table in an inheritance hierarchy, only the rows of the most
     /// derived tables are returned, i.e. only the nodes of a leaf table are
     /// returned.
-    fn nodes<'conn, 'db>(
+    fn nodes<'conn, 'db, C: KgConnection>(
         &'db self,
-        conn: &'conn mut PgConnection,
+        conn: &'conn mut C,
     ) -> impl Iterator<Item = Result<Vec<Node<'db, Self>>, diesel::result::Error>> + 'conn
     where
         'db: 'conn,
     {
         self.tables().filter(|table| table.has_primary_key(self)).map(move |table| {
-            // For each table, we create a SQL diesel query to select the
-            // primary key columns and convert them within the query
-            // into the standardized node name format.
-
-            let table_name = table.table_name();
             let primary_key_columns =
-                table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
+                table.primary_key_columns(self).map(ColumnLike::column_name).collect::<Vec<_>>();
 
-            let dynamic_table = diesel_dynamic_schema::table(table_name);
-            let mut select = DynamicSelectClause::new();
-
-            // Store columns and their names to reuse them for selection and
-            // ordering
-            let columns: Vec<_> = primary_key_columns
-                .iter()
-                .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
-                .collect();
-
-            for col in &columns {
-                select.add_field(*col);
-            }
-
-            let results: Vec<DynamicRow<NamedField<PrimaryKey>>> =
-                dynamic_table.select(select).load(conn)?;
-            let mut nodes: Vec<Node<'_, Self>> = results
+            let mut nodes: Vec<Node<'_, Self>> = conn
+                .load_keys(table.table_schema(), table.table_name(), &primary_key_columns, false)?
                 .into_iter()
-                .map(|row| {
-                    let primary_keys: Vec<PrimaryKey> = row.into();
-                    Node::new(table, primary_keys.into())
-                })
+                .map(|primary_keys| Node::new(table, primary_keys.into()))
                 .collect();
 
             // Ideally, the nodes should be queries with `ORDER BY` clause to
@@ -93,7 +65,10 @@ pub trait KGLikeDB: DatabaseLike {
     /// # Errors
     ///
     /// Returns a `diesel::result::Error` if the database query fails.
-    fn number_of_nodes(&self, conn: &mut PgConnection) -> Result<usize, diesel::result::Error> {
+    fn number_of_nodes(
+        &self,
+        conn: &mut impl KgConnection,
+    ) -> Result<usize, diesel::result::Error> {
         let mut total = 0;
 
         for table in self.tables() {
@@ -101,8 +76,7 @@ pub trait KGLikeDB: DatabaseLike {
                 continue;
             }
 
-            let count: i64 =
-                diesel_dynamic_schema::table(table.table_name()).count().get_result(conn)?;
+            let count = conn.count_rows(table.table_schema(), table.table_name())?;
 
             total += usize::try_from(count).map_err(|_| {
                 diesel::result::Error::DeserializationError(Box::new(std::io::Error::new(
@@ -149,9 +123,9 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// * `conn` - A mutable reference to the database connection.
     #[allow(clippy::too_many_lines, clippy::type_complexity)]
-    fn edges<'conn, 'db>(
+    fn edges<'conn, 'db, C: KgConnection>(
         &'db self,
-        conn: &'conn mut PgConnection,
+        conn: &'conn mut C,
     ) -> impl Iterator<
         Item = Result<
             Vec<(Node<'db, Self>, Node<'db, Self>, EdgeClass<'db, Self>)>,
@@ -182,34 +156,27 @@ pub trait KGLikeDB: DatabaseLike {
                 let referenced_table = fk.referenced_table(self);
 
                 let host_fk_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
-                let edge_class = EdgeClass::new(host_table, host_fk_columns.clone());
-
-                let dynamic_table = diesel_dynamic_schema::table(host_table.table_name());
                 let columns = host_pk_columns
                     .iter()
                     .chain(host_fk_columns.iter())
-                    .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                    .map(|col| col.column_name())
                     .collect::<Vec<_>>();
-                let select = columns.iter().collect::<DynamicSelectClause<_, _>>();
+                let edge_class = EdgeClass::new(host_table, host_fk_columns);
 
-                // We make the query boxed to allow for dynamic construction.
-                let mut query = dynamic_table.select(select).into_boxed();
-
-                // We enforce that all of the involved columns are not null.
-                for col in &columns {
-                    query = query.filter(col.is_not_null());
-                }
-
-                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
+                // We skip the rows where any of the involved columns is null.
+                let rows = conn.load_keys(
+                    host_table.table_schema(),
+                    host_table.table_name(),
+                    &columns,
+                    true,
+                )?;
 
                 let pk_len = host_pk_columns.len();
 
-                let edges = results
+                let edges = rows
                     .into_iter()
-                    .map(|row| {
-                        let mut vals: Vec<PrimaryKey> = row.into();
-                        let fk_vals = vals.split_off(pk_len);
-                        let pk_vals = vals;
+                    .map(|mut pk_vals| {
+                        let fk_vals = pk_vals.split_off(pk_len);
 
                         (
                             Node::new(host_table, pk_vals.into()),
@@ -236,7 +203,7 @@ pub trait KGLikeDB: DatabaseLike {
     /// writing to the files fails.
     fn write_kg_csvs(
         &self,
-        conn: &mut PgConnection,
+        conn: &mut impl KgConnection,
         path: &std::path::Path,
     ) -> Result<TimeTracker, crate::errors::Error> {
         // If the provided path does not exist, create it.

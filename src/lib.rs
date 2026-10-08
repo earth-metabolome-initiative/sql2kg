@@ -7,5 +7,10 @@ pub mod traits;
 
 /// Prelude module re-exporting commonly used items.
 pub mod prelude {
-    pub use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey, traits::KGLikeDB};
+    pub use crate::{
+        edge_class::EdgeClass,
+        node::Node,
+        primary_key::PrimaryKey,
+        traits::{KGLikeDB, KgConnection},
+    };
 }
