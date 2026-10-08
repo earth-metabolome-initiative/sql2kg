@@ -17,6 +17,11 @@ postgres = ["diesel/postgres"]
 sqlite = ["diesel/sqlite"]
 mysql = ["diesel/mysql"]
 
+# `sql-traits` builds against the upstream `sqlparser`, but Cargo only applies
+# `[patch]` sections of the top-level workspace, so the patch is repeated here.
+[patch.crates-io]
+sqlparser = { git = "https://github.com/apache/datafusion-sqlparser-rs", branch = "main" }
+
 [lints.rust]
 missing_docs = "forbid"
 unused_macro_rules = "forbid"

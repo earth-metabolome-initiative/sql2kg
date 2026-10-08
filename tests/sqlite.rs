@@ -2,7 +2,7 @@
 #![cfg(feature = "sqlite")]
 
 use diesel::{Connection, RunQueryDsl, SqliteConnection, sql_query};
-use sql_traits::prelude::ParserDB;
+use sql_traits::prelude::{GenericDialect, ParserDB};
 use sql2kg::prelude::*;
 
 const SCHEMA: &str = "
@@ -33,7 +33,7 @@ fn read(dir: &std::path::Path, file: &str) -> String {
 
 #[test]
 fn exports_sqlite_database() {
-    let db = ParserDB::try_from(SCHEMA).expect("schema must parse");
+    let db = ParserDB::parse::<GenericDialect>(SCHEMA).expect("schema must parse");
     let mut conn = SqliteConnection::establish(":memory:").expect("in-memory database");
     for statement in SCHEMA.split(';').chain(DATA.split(';')).filter(|s| !s.trim().is_empty()) {
         sql_query(statement).execute(&mut conn).expect("statement must run");
