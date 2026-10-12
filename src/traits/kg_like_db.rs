@@ -2,19 +2,18 @@
 
 use std::io::Write;
 
-use diesel::{PgConnection, QueryDsl, RunQueryDsl, UntypedExpressionMethods, sql_types::Untyped};
-use diesel_dynamic_schema::{
-    DynamicSelectClause,
-    dynamic_value::{DynamicRow, NamedField},
+use sql_traits::{
+    errors::LookupError,
+    traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
 };
-use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
 use time_requirements::{prelude::TimeTracker, task::Task};
 
-use crate::{edge_class::EdgeClass, node::Node, primary_key::PrimaryKey};
+use crate::{edge_class::EdgeClass, node::Node, traits::KgConnection};
 
 /// A trait representing knowledge graph-like database functionalities.
 pub trait KGLikeDB: DatabaseLike {
-    /// Iterate over the nodes in the knowledge graph.
+    /// Iterate over the nodes in the knowledge graph, one batch per table
+    /// with a primary key.
     ///
     /// # Arguments
     ///
@@ -34,44 +33,36 @@ pub trait KGLikeDB: DatabaseLike {
     /// another table in an inheritance hierarchy, only the rows of the most
     /// derived tables are returned, i.e. only the nodes of a leaf table are
     /// returned.
-    fn nodes<'conn, 'db>(
+    ///
+    /// # Errors
+    ///
+    /// Returns a `LookupError` if the primary key of a table cannot be
+    /// resolved in the schema. Each batch is a `diesel::result::Error` if its
+    /// database query fails.
+    #[allow(clippy::type_complexity)]
+    fn nodes<'conn, 'db, C: KgConnection>(
         &'db self,
-        conn: &'conn mut PgConnection,
-    ) -> impl Iterator<Item = Result<Vec<Node<'db, Self>>, diesel::result::Error>> + 'conn
+        conn: &'conn mut C,
+    ) -> Result<impl Iterator<Item = diesel::QueryResult<Vec<Node<'db, Self>>>> + 'conn, LookupError>
     where
         'db: 'conn,
     {
-        self.tables().filter(|table| table.has_primary_key(self)).map(move |table| {
-            // For each table, we create a SQL diesel query to select the
-            // primary key columns and convert them within the query
-            // into the standardized node name format.
-
-            let table_name = table.table_name();
+        // Resolve every primary key upfront, so that schema errors surface
+        // before any query runs.
+        let mut tables = Vec::new();
+        for table in self.tables() {
             let primary_key_columns =
-                table.primary_key_columns(self).collect::<Vec<&Self::Column>>();
-
-            let dynamic_table = diesel_dynamic_schema::table(table_name);
-            let mut select = DynamicSelectClause::new();
-
-            // Store columns and their names to reuse them for selection and
-            // ordering
-            let columns: Vec<_> = primary_key_columns
-                .iter()
-                .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
-                .collect();
-
-            for col in &columns {
-                select.add_field(*col);
+                table.primary_key_columns(self)?.map(ColumnLike::column_name).collect::<Vec<_>>();
+            if !primary_key_columns.is_empty() {
+                tables.push((table, primary_key_columns));
             }
+        }
 
-            let results: Vec<DynamicRow<NamedField<PrimaryKey>>> =
-                dynamic_table.select(select).load(conn)?;
-            let mut nodes: Vec<Node<'_, Self>> = results
+        Ok(tables.into_iter().map(move |(table, primary_key_columns)| {
+            let mut nodes: Vec<Node<'_, Self>> = conn
+                .load_keys(table.table_schema(), table.table_name(), &primary_key_columns, false)?
                 .into_iter()
-                .map(|row| {
-                    let primary_keys: Vec<PrimaryKey> = row.into();
-                    Node::new(table, primary_keys.into())
-                })
+                .map(|primary_keys| Node::new(table, primary_keys.into()))
                 .collect();
 
             // Ideally, the nodes should be queries with `ORDER BY` clause to
@@ -81,7 +72,7 @@ pub trait KGLikeDB: DatabaseLike {
             nodes.sort_unstable();
 
             Ok(nodes)
-        })
+        }))
     }
 
     /// Returns the number of nodes in the knowledge graph.
@@ -92,17 +83,17 @@ pub trait KGLikeDB: DatabaseLike {
     ///
     /// # Errors
     ///
-    /// Returns a `diesel::result::Error` if the database query fails.
-    fn number_of_nodes(&self, conn: &mut PgConnection) -> Result<usize, diesel::result::Error> {
+    /// Returns an error if the primary key of a table cannot be resolved in
+    /// the schema, or if a database query fails.
+    fn number_of_nodes(&self, conn: &mut impl KgConnection) -> Result<usize, crate::errors::Error> {
         let mut total = 0;
 
         for table in self.tables() {
-            if !table.has_primary_key(self) {
+            if !table.has_primary_key(self)? {
                 continue;
             }
 
-            let count: i64 =
-                diesel_dynamic_schema::table(table.table_name()).count().get_result(conn)?;
+            let count = conn.count_rows(table.table_schema(), table.table_name())?;
 
             total += usize::try_from(count).map_err(|_| {
                 diesel::result::Error::DeserializationError(Box::new(std::io::Error::new(
@@ -114,7 +105,7 @@ pub trait KGLikeDB: DatabaseLike {
         Ok(total)
     }
 
-    /// Iterate over the edges classes in the knowledge graph.
+    /// Returns the edges classes in the knowledge graph.
     ///
     /// # Implementative details
     ///
@@ -123,93 +114,105 @@ pub trait KGLikeDB: DatabaseLike {
     /// referenced table's primary key columns. Each edge class is represented
     /// as a tuple of the host table name, the referenced table name, and
     /// the foreign key column names.
-    fn edge_classes(&self) -> impl Iterator<Item = EdgeClass<'_, Self>> {
-        self.tables().flat_map(move |t| {
-            let mut edge_classes = t
-                .foreign_keys(self)
-                .filter_map(move |fk| {
-                    // We disregard foreign keys that do not point to primary
-                    // key columns in the referenced table.
-                    if !fk.is_referenced_primary_key(self) {
-                        return None;
-                    }
-
-                    let host_columns = fk.host_columns(self).collect::<Vec<_>>();
-                    Some(EdgeClass::new(t, host_columns))
-                })
-                .collect::<Vec<EdgeClass<'_, Self>>>();
-            edge_classes.sort_unstable();
-            edge_classes
-        })
+    ///
+    /// # Errors
+    ///
+    /// Returns a `LookupError` if a foreign key cannot be resolved in the
+    /// schema.
+    fn edge_classes(&self) -> Result<Vec<EdgeClass<'_, Self>>, LookupError> {
+        let mut edge_classes = Vec::new();
+        for t in self.tables() {
+            let first = edge_classes.len();
+            for fk in t.foreign_keys(self)? {
+                // We disregard foreign keys that do not point to primary
+                // key columns in the referenced table.
+                if fk.is_referenced_primary_key(self)? {
+                    edge_classes.push(EdgeClass::new(t, fk.host_columns(self)?.collect()));
+                }
+            }
+            edge_classes[first..].sort_unstable();
+        }
+        Ok(edge_classes)
     }
 
-    /// Iterate over the edges in the knowledge graph.
+    /// Iterate over the edges in the knowledge graph, one batch per foreign
+    /// key.
     ///
     /// # Arguments
     ///
     /// * `conn` - A mutable reference to the database connection.
-    #[allow(clippy::too_many_lines, clippy::type_complexity)]
-    fn edges<'conn, 'db>(
+    ///
+    /// # Errors
+    ///
+    /// Returns a `LookupError` if a primary or foreign key cannot be resolved
+    /// in the schema. Each batch is a `diesel::result::Error` if its database
+    /// query fails.
+    #[allow(clippy::type_complexity)]
+    fn edges<'conn, 'db, C: KgConnection>(
         &'db self,
-        conn: &'conn mut PgConnection,
-    ) -> impl Iterator<
-        Item = Result<
-            Vec<(Node<'db, Self>, Node<'db, Self>, EdgeClass<'db, Self>)>,
-            diesel::result::Error,
-        >,
-    > + 'conn
+        conn: &'conn mut C,
+    ) -> Result<
+        impl Iterator<
+            Item = diesel::QueryResult<
+                Vec<(Node<'db, Self>, Node<'db, Self>, EdgeClass<'db, Self>)>,
+            >,
+        > + 'conn,
+        LookupError,
+    >
     where
         'db: 'conn,
     {
-        self.tables()
-            .flat_map(move |t| {
-                let host_primary_key_columns =
-                    t.primary_key_columns(self).collect::<Vec<&Self::Column>>();
-
-                t.foreign_keys(self).filter_map(move |fk| {
-                    if !fk.is_referenced_primary_key(self) || host_primary_key_columns.is_empty() {
-                        return None;
-                    }
-                    Some((fk, host_primary_key_columns.clone()))
-                })
-            })
-            .map(move |(fk, host_pk_columns)| {
-                // We query the host table to get all rows and their foreign key
-                // values, then we create the corresponding
-                // nodes for both the host and referenced
-                // tables.
+        // Resolve every foreign key upfront, so that schema errors surface
+        // before any query runs.
+        let mut foreign_keys = Vec::new();
+        for t in self.tables() {
+            let host_pk_columns = t.primary_key_columns(self)?.collect::<Vec<&Self::Column>>();
+            if host_pk_columns.is_empty() {
+                continue;
+            }
+            for fk in t.foreign_keys(self)? {
+                if !fk.is_referenced_primary_key(self)? {
+                    continue;
+                }
                 let host_table = fk.host_table(self);
-                let referenced_table = fk.referenced_table(self);
-
-                let host_fk_columns = fk.host_columns(self).collect::<Vec<&Self::Column>>();
-                let edge_class = EdgeClass::new(host_table, host_fk_columns.clone());
-
-                let dynamic_table = diesel_dynamic_schema::table(host_table.table_name());
+                let referenced_table = fk.referenced_table(self)?;
+                let host_fk_columns = fk.host_columns(self)?.collect::<Vec<&Self::Column>>();
+                // The query selects the host primary key columns followed by
+                // the foreign key columns.
                 let columns = host_pk_columns
                     .iter()
                     .chain(host_fk_columns.iter())
-                    .map(|col| dynamic_table.column::<Untyped, _>(col.column_name()))
+                    .copied()
+                    .map(ColumnLike::column_name)
                     .collect::<Vec<_>>();
-                let select = columns.iter().collect::<DynamicSelectClause<_, _>>();
+                let edge_class = EdgeClass::new(host_table, host_fk_columns);
+                foreign_keys.push((
+                    host_table,
+                    referenced_table,
+                    columns,
+                    host_pk_columns.len(),
+                    edge_class,
+                ));
+            }
+        }
 
-                // We make the query boxed to allow for dynamic construction.
-                let mut query = dynamic_table.select(select).into_boxed();
+        Ok(foreign_keys.into_iter().map(
+            move |(host_table, referenced_table, columns, pk_len, edge_class)| {
+                // We query the host table to get all rows and their foreign
+                // key values, skipping the rows where any of the involved
+                // columns is null, then we create the corresponding nodes for
+                // both the host and referenced tables.
+                let rows = conn.load_keys(
+                    host_table.table_schema(),
+                    host_table.table_name(),
+                    &columns,
+                    true,
+                )?;
 
-                // We enforce that all of the involved columns are not null.
-                for col in &columns {
-                    query = query.filter(col.is_not_null());
-                }
-
-                let results: Vec<DynamicRow<NamedField<PrimaryKey>>> = query.load(conn)?;
-
-                let pk_len = host_pk_columns.len();
-
-                let edges = results
+                let edges = rows
                     .into_iter()
-                    .map(|row| {
-                        let mut vals: Vec<PrimaryKey> = row.into();
-                        let fk_vals = vals.split_off(pk_len);
-                        let pk_vals = vals;
+                    .map(|mut pk_vals| {
+                        let fk_vals = pk_vals.split_off(pk_len);
 
                         (
                             Node::new(host_table, pk_vals.into()),
@@ -220,7 +223,8 @@ pub trait KGLikeDB: DatabaseLike {
                     .collect::<Vec<_>>();
 
                 Ok(edges)
-            })
+            },
+        ))
     }
 
     /// Writes out the CSVs representing the knowledge graph at the given path.
@@ -236,7 +240,7 @@ pub trait KGLikeDB: DatabaseLike {
     /// writing to the files fails.
     fn write_kg_csvs(
         &self,
-        conn: &mut PgConnection,
+        conn: &mut impl KgConnection,
         path: &std::path::Path,
     ) -> Result<TimeTracker, crate::errors::Error> {
         // If the provided path does not exist, create it.
@@ -272,10 +276,10 @@ pub trait KGLikeDB: DatabaseLike {
         let mut nodes_writer = std::io::BufWriter::new(file);
         // Write header
         writeln!(nodes_writer, "node,node_class_ids")?;
-        for (table_id, (nodes_result, table)) in self.nodes(conn).zip(self.tables()).enumerate() {
+        for (table_id, (nodes_result, table)) in self.nodes(conn)?.zip(self.tables()).enumerate() {
             let table_nodes = nodes_result?;
             let ancestor_table_ids = table
-                .ancestral_extended_tables(self)
+                .ancestral_extended_tables(self)?
                 .into_iter()
                 .map(|t| self.table_id(t).expect("Failed to find tables loaded from the database"))
                 .collect::<Vec<usize>>();
@@ -303,7 +307,7 @@ pub trait KGLikeDB: DatabaseLike {
         let mut edge_classes: Vec<EdgeClass<'_, Self>> = Vec::new();
         // Write header
         writeln!(edge_classes_writer, "edge_class")?;
-        for edge_class in self.edge_classes() {
+        for edge_class in self.edge_classes()? {
             writeln!(edge_classes_writer, "\"{edge_class}\"")?;
             edge_classes.push(edge_class);
         }
@@ -320,7 +324,7 @@ pub trait KGLikeDB: DatabaseLike {
         let mut edges_writer = std::io::BufWriter::new(file);
         // Write header
         writeln!(edges_writer, "src_id,dst_id,edge_class_id")?;
-        for edges_result in self.edges(conn) {
+        for edges_result in self.edges(conn)? {
             let edges = edges_result?;
             for (host_node, referenced_node, edge_class) in edges {
                 let src_id = nodes

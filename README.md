@@ -12,9 +12,9 @@ This library leverages the [`sql-traits`](https://github.com/earth-metabolome-in
 ## Features
 
 * **Automated Extraction**: Automatically converts SQL tables to nodes and foreign keys to edges.
-* **Schema Agnostic**: Operates on any database backend implementing the `sql-traits` interfaces.
+* **Schema Agnostic**: Operates on any schema implementing the `sql-traits` interfaces.
 * **Generic Output**: Writes to standard CSV files (`nodes.csv`, `edges.csv`, `node_classes.csv`).
-* **Diesel Integration**: Built on top of [`diesel`](https://diesel.rs) for robust database interaction.
+* **Multiple Backends**: Reads PostgreSQL, SQLite and MySQL databases through [`diesel`](https://diesel.rs).
 
 ## Usage
 
@@ -25,12 +25,28 @@ This crate is currently not published to `crates.io`. You can add it to your pro
 sql2kg = { git = "https://github.com/earth-metabolome-initiative/sql2kg" }
 ```
 
+### Database backends
+
+Each backend is behind a cargo feature, which implements `KgConnection` for its diesel connection:
+
+| Feature | Connection | Native library |
+|---|---|---|
+| `postgres` (default) | `diesel::PgConnection` | `libpq` |
+| `sqlite` | `diesel::SqliteConnection` | `libsqlite3` |
+| `mysql` | `diesel::MysqlConnection` | `libmysqlclient` |
+
+```toml
+[dependencies]
+sql2kg = { git = "https://github.com/earth-metabolome-initiative/sql2kg", default-features = false, features = ["sqlite"] }
+```
+
+Primary and foreign key columns must be text, integer (any width, decoded as `i64`), or, on PostgreSQL, `UUID`.
+
 ## Example
 
-The following example demonstrates how to use the `KGLikeDB` trait to export Knowledge Graph CSVs from a database schema wrapper.
+The following example demonstrates how to use the `KGLikeDB` trait to export Knowledge Graph CSVs from a database schema wrapper, using a connection to any of the enabled backends.
 
 ```rust,no_run
-use diesel::PgConnection;
 use sql2kg::prelude::*;
 use std::path::Path;
 
@@ -38,11 +54,11 @@ use std::path::Path;
 ///
 /// # Arguments
 /// * `db_schema` - An object implementing `KGLikeDB` (and `DatabaseLike`)
-/// * `conn` - Active PostgreSQL connection
+/// * `conn` - Active database connection, e.g. a `PgConnection`
 fn export_to_csv<DB>(
     db_schema: &DB,
-    conn: &mut PgConnection
-) -> Result<(), Box<dyn std::error::Error>> 
+    conn: &mut impl KgConnection,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     DB: KGLikeDB
 {

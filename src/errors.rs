@@ -7,6 +7,9 @@ pub enum Error {
     /// A diesel error occurred.
     #[error("Diesel error: {0}")]
     Diesel(#[from] diesel::result::Error),
+    /// A schema object could not be resolved.
+    #[error("Lookup error: {0}")]
+    Lookup(#[from] sql_traits::errors::LookupError),
     /// An IO error occurred.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -5,14 +5,22 @@ edition = "2024"
 
 [dependencies]
 sql-traits = { git = "https://github.com/earth-metabolome-initiative/sql-traits", branch = "main" }
-diesel = { git = "https://github.com/diesel-rs/diesel", branch = "main", features = [
-	"postgres",
-	"uuid",
-] }
+diesel = { git = "https://github.com/diesel-rs/diesel", branch = "main", features = ["uuid"] }
 diesel-dynamic-schema = { git = "https://github.com/diesel-rs/diesel", branch = "main" }
 uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"
 time_requirements = "0.1.0"
+
+[features]
+default = ["postgres"]
+postgres = ["diesel/postgres"]
+sqlite = ["diesel/sqlite"]
+mysql = ["diesel/mysql"]
+
+# `sql-traits` builds against the upstream `sqlparser`, but Cargo only applies
+# `[patch]` sections of the top-level workspace, so the patch is repeated here.
+[patch.crates-io]
+sqlparser = { git = "https://github.com/apache/datafusion-sqlparser-rs", branch = "main" }
 
 [lints.rust]
 missing_docs = "forbid"
@@ -42,3 +50,6 @@ should_panic_without_expect = "allow"
 doc_markdown = "allow"
 clone_on_copy = "forbid"
 pedantic = { level = "deny", priority = -1 }
+
+[dev-dependencies]
+tempfile = "3"

@@ -63,8 +63,12 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
+    - name: Install database client libraries
+      run: sudo apt-get update && sudo apt-get install -y libpq-dev libsqlite3-dev libmysqlclient-dev
     - name: Run clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Run clippy without default features
+      run: cargo clippy --all-targets --no-default-features -- -D warnings
 
   doc:
     name: Documentation
