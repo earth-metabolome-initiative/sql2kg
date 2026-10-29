@@ -14,6 +14,10 @@ uuid = { version = "1.4", features = ["v4"] }
 thiserror = "2.0"
 time_requirements = "0.1.0"
 
+# Follow the upstream parser API, as `sql-traits` does in its own root.
+[patch.crates-io]
+sqlparser = { git = "https://github.com/apache/datafusion-sqlparser-rs", branch = "main" }
+
 [lints.rust]
 missing_docs = "forbid"
 unused_macro_rules = "forbid"

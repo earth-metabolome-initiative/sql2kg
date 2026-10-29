@@ -10,6 +10,9 @@ pub enum Error {
     /// An IO error occurred.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// An SQL object lookup error occurred.
+    #[error("Lookup error: {0}")]
+    Lookup(#[from] sql_traits::errors::LookupError),
     /// A node from the edge list could not be found in the node list.
     #[error("Node not found: {0}")]
     NodeNotFound(String),
